@@ -17,6 +17,10 @@
 #include "ConsoleUtils.h"
 #include "keystone.h"
 
+#ifndef __clang__
+#pragma warning(disable: 4477)
+#endif
+
 #define PRINT_ERROR(x, ...) clrprintf(ConsoleColor::Red, "[!] Error: "); clrprintf(ConsoleColor::White, x "\n", __VA_ARGS__);
 #define PRINT_WARNING(x, ...) clrprintf(ConsoleColor::DarkYellow, "[!] Warning: "); clrprintf(ConsoleColor::White, x "\n", __VA_ARGS__);
 #define PRINT_VERBOSE(x, ...) clrprintf(ConsoleColor::Magenta, "[*] Verbose: "); clrprintf(ConsoleColor::White, x "\n", __VA_ARGS__);
@@ -27,8 +31,6 @@
 #define PRINT_STATUS(x) clrprintf(ConsoleColor::Blue, "[~] " x " ");
 #define PRINT_STATUS_OK clrprintf(ConsoleColor::Green, "[  OK  ]\n");
 #define PRINT_STATUS_FAIL clrprintf(ConsoleColor::Red, "[ FAIL ]\n");
-
-#define P2ALIGNUP(x, align) (-(-(x) & -(align)))
 
 unsigned long g_nDataSectionSize = 0x1000;
 unsigned long g_nCodeSectionSize = 0x1000;
@@ -149,22 +151,27 @@ void UnMapFile(std::tuple<HANDLE, HANDLE, void*> data) {
 	}
 }
 
-//static inline unsigned long Alignment(unsigned long size, unsigned long alignment, unsigned long address)
-//{
-//	if (size % alignment == 0) {
-//		return address + size;
-//	}
-//	else {
-//		return address + (size / alignment + 1) * alignment;
-//	}
-//};
+#ifdef __clang__
+#define P2ALIGNUP(x, align) (-(-(x) & -(align)))
+#else
+static inline unsigned long Alignment(unsigned long size, unsigned long alignment)
+{
+	if (size % alignment == 0) {
+		return size;
+	}
+	else {
+		return (size / alignment + 1) * alignment;
+	}
+};
+#define P2ALIGNUP(x, align) Alignment(x, align)
+#endif
 
 std::tuple<void*, unsigned long, unsigned long, unsigned long, unsigned long> AppendNewSection32(/*DWORD nFileSize,*/ void* pMap, const char* szName, DWORD nVirtualSize, DWORD nCharacteristics) {
 	PIMAGE_DOS_HEADER dh = reinterpret_cast<PIMAGE_DOS_HEADER>(pMap);
-	PIMAGE_NT_HEADERS32 nth = reinterpret_cast<PIMAGE_NT_HEADERS32>(reinterpret_cast<unsigned long>(pMap) + dh->e_lfanew);
+	PIMAGE_NT_HEADERS32 nth = reinterpret_cast<PIMAGE_NT_HEADERS32>(reinterpret_cast<unsigned char*>(pMap) + dh->e_lfanew);
 	PIMAGE_FILE_HEADER pfh = &(nth->FileHeader);
 	PIMAGE_OPTIONAL_HEADER32 poh = &(nth->OptionalHeader);
-	PIMAGE_SECTION_HEADER pFirstSectionHeader = reinterpret_cast<PIMAGE_SECTION_HEADER>(reinterpret_cast<unsigned long>(pfh) + sizeof(IMAGE_FILE_HEADER) + pfh->SizeOfOptionalHeader);
+	PIMAGE_SECTION_HEADER pFirstSectionHeader = reinterpret_cast<PIMAGE_SECTION_HEADER>(reinterpret_cast<unsigned char*>(pfh) + sizeof(IMAGE_FILE_HEADER) + pfh->SizeOfOptionalHeader);
 	
 	WORD nNumberOfSections = pfh->NumberOfSections;
 	DWORD nSectionAlignment = poh->SectionAlignment;
@@ -184,15 +191,15 @@ std::tuple<void*, unsigned long, unsigned long, unsigned long, unsigned long> Ap
 	pfh->NumberOfSections = nNumberOfSections + 1;
 	poh->SizeOfImage = P2ALIGNUP(pNewSectionHeader->VirtualAddress + pNewSectionHeader->Misc.VirtualSize, nSectionAlignment);
 
-	return std::tuple<void*, unsigned long, unsigned long, unsigned long, unsigned long>(reinterpret_cast<void*>(reinterpret_cast<unsigned long>(pMap) + pNewSectionHeader->PointerToRawData), pNewSectionHeader->VirtualAddress, pNewSectionHeader->Misc.VirtualSize, pNewSectionHeader->PointerToRawData, pNewSectionHeader->SizeOfRawData);
+	return std::tuple<void*, unsigned long, unsigned long, unsigned long, unsigned long>(reinterpret_cast<void*>(reinterpret_cast<unsigned char*>(pMap) + pNewSectionHeader->PointerToRawData), pNewSectionHeader->VirtualAddress, pNewSectionHeader->Misc.VirtualSize, pNewSectionHeader->PointerToRawData, pNewSectionHeader->SizeOfRawData);
 }
 
 std::tuple<void*, unsigned long, unsigned long, unsigned long, unsigned long> AppendNewSection64(/*DWORD nFileSize,*/ void* pMap, const char* szName, DWORD nVirtualSize, DWORD nCharacteristics) {
 	PIMAGE_DOS_HEADER dh = reinterpret_cast<PIMAGE_DOS_HEADER>(pMap);
-	PIMAGE_NT_HEADERS64 nth = reinterpret_cast<PIMAGE_NT_HEADERS64>(reinterpret_cast<unsigned long>(pMap) + dh->e_lfanew);
+	PIMAGE_NT_HEADERS64 nth = reinterpret_cast<PIMAGE_NT_HEADERS64>(reinterpret_cast<unsigned char*>(pMap) + dh->e_lfanew);
 	PIMAGE_FILE_HEADER pfh = &(nth->FileHeader);
 	PIMAGE_OPTIONAL_HEADER64 poh = &(nth->OptionalHeader);
-	PIMAGE_SECTION_HEADER pFirstSectionHeader = reinterpret_cast<PIMAGE_SECTION_HEADER>(reinterpret_cast<unsigned long>(pfh) + sizeof(IMAGE_FILE_HEADER) + pfh->SizeOfOptionalHeader);
+	PIMAGE_SECTION_HEADER pFirstSectionHeader = reinterpret_cast<PIMAGE_SECTION_HEADER>(reinterpret_cast<unsigned char*>(pfh) + sizeof(IMAGE_FILE_HEADER) + pfh->SizeOfOptionalHeader);
 
 	WORD nNumberOfSections = pfh->NumberOfSections;
 	DWORD nSectionAlignment = poh->SectionAlignment;
@@ -213,10 +220,11 @@ std::tuple<void*, unsigned long, unsigned long, unsigned long, unsigned long> Ap
 	poh->SizeOfImage = P2ALIGNUP(pNewSectionHeader->VirtualAddress + pNewSectionHeader->Misc.VirtualSize, nSectionAlignment);
 
 	//return std::tuple<void*, unsigned long, unsigned long>(reinterpret_cast<void*>(reinterpret_cast<unsigned long>(pMap) + pNewSectionHeader->PointerToRawData), pNewSectionHeader->SizeOfRawData, pNewSectionHeader->VirtualAddress);
-	return std::tuple<void*, unsigned long, unsigned long, unsigned long, unsigned long>(reinterpret_cast<void*>(reinterpret_cast<unsigned long>(pMap) + pNewSectionHeader->PointerToRawData), pNewSectionHeader->VirtualAddress, pNewSectionHeader->Misc.VirtualSize, pNewSectionHeader->PointerToRawData, pNewSectionHeader->SizeOfRawData);
+	return std::tuple<void*, unsigned long, unsigned long, unsigned long, unsigned long>(reinterpret_cast<void*>(reinterpret_cast<unsigned char*>(pMap) + pNewSectionHeader->PointerToRawData), pNewSectionHeader->VirtualAddress, pNewSectionHeader->Misc.VirtualSize, pNewSectionHeader->PointerToRawData, pNewSectionHeader->SizeOfRawData);
 }
 
 /*
+* TODO: Symbols from Import/Export tables.
 static bool symbol_resolver(const char* symbol, uint64_t* value)
 {
 	// is this the missing symbol "_l1" that we want to handle?
@@ -235,9 +243,9 @@ std::tuple<bool, std::vector<char>> ReadTextFile(const char* fpath) {
 
 	std::vector<char> data;
 
-	long long fsize = 0;
-	struct _stat64 st;
-	if (!_stat64(fpath, &st)) {
+	unsigned int fsize = 0;
+	struct _stat st;
+	if (!_stat(fpath, &st)) {
 		fsize = st.st_size;
 	}
 	else {
@@ -270,9 +278,9 @@ std::tuple<bool, std::vector<unsigned char>> ReadBinaryFile(const char* fpath) {
 
 	std::vector<unsigned char> data;
 
-	long long fsize = 0;
-	struct _stat64 st;
-	if (!_stat64(fpath, &st)) {
+	unsigned int fsize = 0;
+	struct _stat st;
+	if (!_stat(fpath, &st)) {
 		fsize = st.st_size;
 	}
 	else {
@@ -339,7 +347,7 @@ std::vector<unsigned char> Assembly32(unsigned long nBaseAddress, const char* sz
 	return data;
 }
 
-std::vector<unsigned char> Assembly64(unsigned long nBaseAddress, const char* szAsm) {
+std::vector<unsigned char> Assembly64(unsigned long long nBaseAddress, const char* szAsm) {
 	std::vector<unsigned char> data;
 	ks_engine* ks = nullptr;
 	if (ks_open(KS_ARCH_X86, KS_MODE_64, &ks) == KS_ERR_OK) {
@@ -382,18 +390,22 @@ int main(int argc, char* argv[], char* envp[])
 	}
 
 	if (argc < 2) {
-		PRINT_WARNING("Usage: %s [/verbose:<level>] [/bdatasize:<bytes>] [/bcodesize:<bytes>] [/input:<file>] [/payload:<file>] [/savepayload] [/outputpayload:<file>] [/output:<file>]\n", szMainFile);
+		PRINT_WARNING("Usage: %s [/verbose:<level>] [/mindatasize:<bytes>] [/mincodesize:<bytes>] [/disabledep] [/disableaslr] [/forceguardcf] [/input:<file>] [/payload:<file>] [/savepayload] [/outputpayload:<file>] [/output:<file>]\n", szMainFile);
 		return -1;
 	}
 	else {
 		for (int i = 0; i < argc; ++i) {
 			const char* arg = argv[i];
 			if (!strncmp(arg, "/help", 5) || !strncmp(arg, "/?", 2)) {
-				PRINT_WARNING("Usage: %s [/verbose:<level>] [/bdatasize:<bytes>] [/bcodesize:<bytes>] [/input:<file>] [/payload:<file>] [/savepayload] [/outputpayload:<file>] [/output:<file>]\n\n    /verbose:<level> - Verbosity level.\n    /bdatasize - Base `.rxdata` size. (Default: 4096)\n    /bcodesize - Base `.rxcode` size. (Default: 4096)\n    /input:<file> - Input PE executable.\n    /payload:<file> - Input binary (.bin) or assembly file (.asm). (Default: null)\n    /savepayload - Save payload to binary file.\n    /outputpayload - Output payload binary. (Default: The name of the output file with `.bin` extension.)\n    /output:<file> - Output PE executable. (Default: The name of the input file with patch prefix.)\n\n", szMainFile);
+				PRINT_WARNING("Usage: %s [/verbose:<level>] [/mindatasize:<bytes>] [/mincodesize:<bytes>] [/disabledep] [/disableaslr] [/forceguardcf] [/input:<file>] [/payload:<file>] [/savepayload] [/outputpayload:<file>] [/output:<file>]\n\n    /verbose:<level> - Verbosity level.\n    /mindatasize - Minimum `.rxdata` size. (Default: 4096)\n    /mincodesize - Minimum `.rxtext` size. (Default: 4096)\n    /disabledep - Disables DEP.\n    /disableaslr - Disables ASLR.\n    /forceguardcf - Force processing for GuardCF protected executable.\n    /input:<file> - Input PE executable.\n    /payload:<file> - Input binary (.bin) or assembly file (.asm). (Default: null)\n    /savepayload - Save payload to binary file.\n    /outputpayload - Output payload binary. (Default: The name of the output file with `.bin` extension.)\n    /output:<file> - Output PE executable. (Default: The name of the input file with patch prefix.)\n\n", szMainFile);
 				return 0;
 			}
 		}
 	}
+
+	bool bDisableDEP = false;
+	bool bDisableASLR = false;
+	bool bForceGuardCF = false;
 
 	char szInputFile[1024];
 	memset(szInputFile, 0, sizeof(szInputFile));
@@ -415,17 +427,38 @@ int main(int argc, char* argv[], char* envp[])
 			}
 			continue;
 		}
-		if (!strncmp(arg, "/bdatasize:", 11)) {
-			sscanf_s(arg, "/bdatasize:%lu", &g_nDataSectionSize);
+		if (!strncmp(arg, "/mindatasize:", 13)) {
+			sscanf_s(arg, "/mindatasize:%lu", &g_nDataSectionSize);
 			if (g_nVerboseLevel > 0) {
 				PRINT_VERBOSE("The size of the sector `.rxdata` is set to %lu bytes.", g_nDataSectionSize);
 			}
 			continue;
 		}
-		if (!strncmp(arg, "/bcodesize:", 11)) {
-			sscanf_s(arg, "/bcodesize:%lu", &g_nCodeSectionSize);
+		if (!strncmp(arg, "/mincodesize:", 13)) {
+			sscanf_s(arg, "/mincodesize:%lu", &g_nCodeSectionSize);
 			if (g_nVerboseLevel > 0) {
 				PRINT_VERBOSE("The size of the sector `.rxtext` is set to %lu bytes.", g_nCodeSectionSize);
+			}
+			continue;
+		}
+		if (!strncmp(arg, "/disabledep", 11)) {
+			if (g_nVerboseLevel > 0) {
+				PRINT_VERBOSE("DEP is disabled.");
+				bDisableDEP = true;
+			}
+			continue;
+		}
+		if (!strncmp(arg, "/disableaslr", 12)) {
+			if (g_nVerboseLevel > 0) {
+				PRINT_VERBOSE("ASLR is disabled.");
+				bDisableASLR = true;
+			}
+			continue;
+		}
+		if (!strncmp(arg, "/forceguardcf", 13)) {
+			if (g_nVerboseLevel > 0) {
+				PRINT_VERBOSE("Enabled force processing for GuardCF protected executable.");
+				bForceGuardCF = true;
 			}
 			continue;
 		}
@@ -548,15 +581,13 @@ int main(int argc, char* argv[], char* envp[])
 		memset(szDirFile, 0, sizeof(szDirFile));
 		char szFile[256];
 		memset(szFile, 0, sizeof(szFile));
-		char szFileExt[32];
-		memset(szFileExt, 0, sizeof(szFileExt));
-		if (_splitpath_s(szPayloadFile, szDriveFile, sizeof(szDriveFile) - 1, szDirFile, sizeof(szDirFile) - 1, szFile, sizeof(szFile) - 1, szFileExt, sizeof(szFileExt) - 1)) {
+		if (_splitpath_s(szPayloadFile, szDriveFile, sizeof(szDriveFile) - 1, szDirFile, sizeof(szDirFile) - 1, szFile, sizeof(szFile) - 1, nullptr, 0)) {
 			PRINT_ERROR("Overflow! #7\n");
 			return -1;
 		}
 		char szBuffer[1024];
 		memset(szBuffer, 0, sizeof(szBuffer));
-		sprintf_s(szBuffer, "%s%s%s.bin", szDriveFile, szDirFile, szFile, szFileExt);
+		sprintf_s(szBuffer, "%s%s%s.bin", szDriveFile, szDirFile, szFile);
 
 		memcpy_s(szOutputPayloadFile, sizeof(szOutputPayloadFile) - 1, szBuffer, sizeof(szBuffer) - 1);
 	}
@@ -594,7 +625,7 @@ int main(int argc, char* argv[], char* envp[])
 	}
 
 	PRINT_INFO("Working with Source...");
-	std::tuple<HANDLE, HANDLE, void*> src = MapFile("C:\\Users\\zeze8\\source\\repos\\RenJack\\Release\\FunctionSize.exe");
+	std::tuple<HANDLE, HANDLE, void*> src = MapFile(szInputFile);
 	
 	HANDLE hSrcFile = std::get<0>(src);
 	HANDLE hSrcFileMap = std::get<1>(src);
@@ -636,7 +667,7 @@ int main(int argc, char* argv[], char* envp[])
 		return -1;
 	}
 
-	PIMAGE_NT_HEADERS src_nth = reinterpret_cast<PIMAGE_NT_HEADERS>(reinterpret_cast<unsigned long>(src_dh) + src_dh->e_lfanew);
+	PIMAGE_NT_HEADERS src_nth = reinterpret_cast<PIMAGE_NT_HEADERS>(reinterpret_cast<unsigned char*>(src_dh) + src_dh->e_lfanew);
 	if (src_nth->Signature != IMAGE_NT_SIGNATURE) {
 		PRINT_ERROR("Invalid PE signature.");
 		return -1;
@@ -649,9 +680,14 @@ int main(int argc, char* argv[], char* envp[])
 	PIMAGE_FILE_HEADER src_pfh = &(src_nth->FileHeader);
 	if (src_pfh->Machine == IMAGE_FILE_MACHINE_I386) {
 		PRINT_INFO("Detected 32BIT machine.");
-		PIMAGE_OPTIONAL_HEADER32 src_poh = &(src_nth->OptionalHeader);
+		PIMAGE_OPTIONAL_HEADER32 src_poh = reinterpret_cast<PIMAGE_OPTIONAL_HEADER32>(&(src_nth->OptionalHeader));
 		if (src_poh->Magic != IMAGE_NT_OPTIONAL_HDR32_MAGIC) {
 			PRINT_ERROR("Invalid optional PE signature.");
+			return -1;
+		}
+
+		if ((src_poh->DllCharacteristics & IMAGE_DLLCHARACTERISTICS_GUARD_CF) && !bForceGuardCF) {
+			PRINT_ERROR("This application is protected from this injection method.");
 			return -1;
 		}
 
@@ -660,7 +696,7 @@ int main(int argc, char* argv[], char* envp[])
 		DWORD nNewFileSize = P2ALIGNUP(nFileSize + g_nDataSectionSize + g_nCodeSectionSize, src_poh->FileAlignment);
 		PRINT_POSITIVE("TargetSize: %lu bytes.", nNewFileSize);
 
-		std::tuple<HANDLE, HANDLE, void*> dst = MapNewFile("C:\\Users\\zeze8\\source\\repos\\RenJack\\Release\\FunctionSize_patched.exe", nNewFileSize);
+		std::tuple<HANDLE, HANDLE, void*> dst = MapNewFile(szOutputFile, nNewFileSize);
 
 		hDstFile = std::get<0>(dst);
 		hDstFileMap = std::get<1>(dst);
@@ -681,8 +717,16 @@ int main(int argc, char* argv[], char* envp[])
 		}
 
 		PIMAGE_DOS_HEADER dst_dh = reinterpret_cast<PIMAGE_DOS_HEADER>(pDstMap);
-		PIMAGE_NT_HEADERS32 dst_nth = reinterpret_cast<PIMAGE_NT_HEADERS32>(reinterpret_cast<unsigned long>(dst_dh) + dst_dh->e_lfanew);
+		PIMAGE_NT_HEADERS32 dst_nth = reinterpret_cast<PIMAGE_NT_HEADERS32>(reinterpret_cast<unsigned char*>(dst_dh) + dst_dh->e_lfanew);
 		PIMAGE_OPTIONAL_HEADER32 dst_poh = &(dst_nth->OptionalHeader);
+
+		if (bDisableDEP) {
+			dst_poh->DllCharacteristics &= ~IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE;
+		}
+
+		if (bDisableASLR) {
+			dst_poh->DllCharacteristics &= ~IMAGE_DLLCHARACTERISTICS_NX_COMPAT;
+		}
 
 		if (g_nVerboseLevel >= 1) {
 			PRINT_VERBOSE("Copying data from Source to Target...")
@@ -798,12 +842,17 @@ int main(int argc, char* argv[], char* envp[])
 			return -1;
 		}
 
+		if ((src_poh->DllCharacteristics & IMAGE_DLLCHARACTERISTICS_GUARD_CF) && !bForceGuardCF) {
+			PRINT_ERROR("This application is protected from this injection method.");
+			return -1;
+		}
+
 		PRINT_INFO("Working with Target...");
 
 		DWORD nNewFileSize = P2ALIGNUP(nFileSize + g_nDataSectionSize + g_nCodeSectionSize, src_poh->FileAlignment);
 		PRINT_POSITIVE("TargetSize: %lu bytes.", nNewFileSize);
 
-		std::tuple<HANDLE, HANDLE, void*> dst = MapNewFile("C:\\Users\\zeze8\\source\\repos\\RenJack\\Release\\FunctionSize_patched.exe", nNewFileSize);
+		std::tuple<HANDLE, HANDLE, void*> dst = MapNewFile(szOutputFile, nNewFileSize);
 
 		hDstFile = std::get<0>(dst);
 		hDstFileMap = std::get<1>(dst);
@@ -824,9 +873,16 @@ int main(int argc, char* argv[], char* envp[])
 		}
 
 		PIMAGE_DOS_HEADER dst_dh = reinterpret_cast<PIMAGE_DOS_HEADER>(pDstMap);
-		PIMAGE_NT_HEADERS64 dst_nth = reinterpret_cast<PIMAGE_NT_HEADERS64>(reinterpret_cast<unsigned long>(dst_dh) + dst_dh->e_lfanew);
-		//PIMAGE_FILE_HEADER dst_pfh = &(dst_nth->FileHeader); // Unused
+		PIMAGE_NT_HEADERS64 dst_nth = reinterpret_cast<PIMAGE_NT_HEADERS64>(reinterpret_cast<unsigned char*>(dst_dh) + dst_dh->e_lfanew);
 		PIMAGE_OPTIONAL_HEADER64 dst_poh = &(dst_nth->OptionalHeader);
+
+		if (bDisableDEP) {
+			dst_poh->DllCharacteristics &= ~IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE;
+		}
+
+		if (bDisableASLR) {
+			dst_poh->DllCharacteristics &= ~IMAGE_DLLCHARACTERISTICS_NX_COMPAT;
+		}
 
 		if (g_nVerboseLevel >= 1) {
 			PRINT_VERBOSE("Copying data from Source to Target...")
