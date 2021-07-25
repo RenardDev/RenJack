@@ -34,3 +34,8 @@ RenJack by Ren (zeze839@gmail.com) [Version 1.0.0.0]
 ```
 RenJack /verbose:1 /input:RenJack.exe
 ```
+# Sources
+```
+https://github.com/hMihaiDavid/addscn
+https://github.com/chromadevlabs/exhume
+```
