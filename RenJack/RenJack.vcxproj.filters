@@ -1,0 +1,83 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Исходные файлы">
+      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
+      <Extensions>cpp;c;cc;cxx;c++;cppm;ixx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
+    </Filter>
+    <Filter Include="Файлы заголовков">
+      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
+      <Extensions>h;hh;hpp;hxx;h++;hm;inl;inc;ipp;xsd</Extensions>
+    </Filter>
+    <Filter Include="Файлы ресурсов">
+      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
+      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
+    </Filter>
+    <Filter Include="keystone">
+      <UniqueIdentifier>{4edb25e9-8adc-4293-8f3e-04fc866a47d7}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="keystone\include">
+      <UniqueIdentifier>{7a5574de-66cd-4fad-bc3a-e830c8008523}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="keystone\lib">
+      <UniqueIdentifier>{1fe8318c-802b-452c-ab79-d46c9e56ae27}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="keystone\lib\x86">
+      <UniqueIdentifier>{37e76a2e-6ce4-410a-bee5-5f89b0cd7dc7}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="keystone\lib\x86_64">
+      <UniqueIdentifier>{ba5da7b6-d5c7-4cdc-8d27-18d71ef6d191}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="RenJack.cpp">
+      <Filter>Исходные файлы</Filter>
+    </ClCompile>
+    <ClCompile Include="ConsoleUtils\ConsoleUtils.cpp">
+      <Filter>Исходные файлы</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="ConsoleUtils\ConsoleUtils.h">
+      <Filter>Файлы заголовков</Filter>
+    </ClInclude>
+    <ClInclude Include="keystone\include\arm.h">
+      <Filter>keystone\include</Filter>
+    </ClInclude>
+    <ClInclude Include="keystone\include\arm64.h">
+      <Filter>keystone\include</Filter>
+    </ClInclude>
+    <ClInclude Include="keystone\include\evm.h">
+      <Filter>keystone\include</Filter>
+    </ClInclude>
+    <ClInclude Include="keystone\include\hexagon.h">
+      <Filter>keystone\include</Filter>
+    </ClInclude>
+    <ClInclude Include="keystone\include\keystone.h">
+      <Filter>keystone\include</Filter>
+    </ClInclude>
+    <ClInclude Include="keystone\include\mips.h">
+      <Filter>keystone\include</Filter>
+    </ClInclude>
+    <ClInclude Include="keystone\include\ppc.h">
+      <Filter>keystone\include</Filter>
+    </ClInclude>
+    <ClInclude Include="keystone\include\sparc.h">
+      <Filter>keystone\include</Filter>
+    </ClInclude>
+    <ClInclude Include="keystone\include\systemz.h">
+      <Filter>keystone\include</Filter>
+    </ClInclude>
+    <ClInclude Include="keystone\include\x86.h">
+      <Filter>keystone\include</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <Library Include="keystone\lib\x86_64\keystone.lib">
+      <Filter>keystone\lib\x86_64</Filter>
+    </Library>
+    <Library Include="keystone\lib\x86\keystone.lib">
+      <Filter>keystone\lib\x86</Filter>
+    </Library>
+  </ItemGroup>
+</Project>
