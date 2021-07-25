@@ -390,14 +390,14 @@ int main(int argc, char* argv[], char* envp[])
 	}
 
 	if (argc < 2) {
-		PRINT_WARNING("Usage: %s [/verbose:<level>] [/mindatasize:<bytes>] [/mincodesize:<bytes>] [/disabledep] [/disableaslr] [/forceguardcf] [/input:<file>] [/payload:<file>] [/savepayload] [/outputpayload:<file>] [/output:<file>]\n", szMainFile);
+		PRINT_WARNING("Usage: %s [/verbose:<level>] [/maxdatasize:<bytes>] [/maxcodesize:<bytes>] [/disabledep] [/disableaslr] [/forceguardcf] [/input:<file>] [/payload:<file>] [/savepayload] [/outputpayload:<file>] [/output:<file>]\n", szMainFile);
 		return -1;
 	}
 	else {
 		for (int i = 0; i < argc; ++i) {
 			const char* arg = argv[i];
 			if (!strncmp(arg, "/help", 5) || !strncmp(arg, "/?", 2)) {
-				PRINT_WARNING("Usage: %s [/verbose:<level>] [/mindatasize:<bytes>] [/mincodesize:<bytes>] [/disabledep] [/disableaslr] [/forceguardcf] [/input:<file>] [/payload:<file>] [/savepayload] [/outputpayload:<file>] [/output:<file>]\n\n    /verbose:<level> - Verbosity level.\n    /mindatasize - Minimum `.rxdata` size. (Default: 4096)\n    /mincodesize - Minimum `.rxtext` size. (Default: 4096)\n    /disabledep - Disables DEP.\n    /disableaslr - Disables ASLR.\n    /forceguardcf - Force processing for GuardCF protected executable.\n    /input:<file> - Input PE executable.\n    /payload:<file> - Input binary (.bin) or assembly file (.asm). (Default: null)\n    /savepayload - Save payload to binary file.\n    /outputpayload - Output payload binary. (Default: The name of the output file with `.bin` extension.)\n    /output:<file> - Output PE executable. (Default: The name of the input file with patch prefix.)\n\n", szMainFile);
+				PRINT_WARNING("Usage: %s [/verbose:<level>] [/maxdatasize:<bytes>] [/maxcodesize:<bytes>] [/disabledep] [/disableaslr] [/forceguardcf] [/input:<file>] [/payload:<file>] [/savepayload] [/outputpayload:<file>] [/output:<file>]\n\n    /verbose:<level> - Verbosity level.\n    /mindatasize - Maximum `.rxdata` size. (Default: 4096)\n    /maxcodesize - Minimum `.rxtext` size. (Default: 4096)\n    /disabledep - Disables DEP.\n    /disableaslr - Disables ASLR.\n    /forceguardcf - Force processing for GuardCF protected executable.\n    /input:<file> - Input PE executable.\n    /payload:<file> - Input binary (.bin) or assembly file (.asm). (Default: null)\n    /savepayload - Save payload to binary file.\n    /outputpayload - Output payload binary. (Default: The name of the output file with `.bin` extension.)\n    /output:<file> - Output PE executable. (Default: The name of the input file with patch prefix.)\n\n", szMainFile);
 				return 0;
 			}
 		}
@@ -427,15 +427,15 @@ int main(int argc, char* argv[], char* envp[])
 			}
 			continue;
 		}
-		if (!strncmp(arg, "/mindatasize:", 13)) {
-			sscanf_s(arg, "/mindatasize:%lu", &g_nDataSectionSize);
+		if (!strncmp(arg, "/maxdatasize:", 13)) {
+			sscanf_s(arg, "/maxdatasize:%lu", &g_nDataSectionSize);
 			if (g_nVerboseLevel > 0) {
 				PRINT_VERBOSE("The size of the sector `.rxdata` is set to %lu bytes.", g_nDataSectionSize);
 			}
 			continue;
 		}
-		if (!strncmp(arg, "/mincodesize:", 13)) {
-			sscanf_s(arg, "/mincodesize:%lu", &g_nCodeSectionSize);
+		if (!strncmp(arg, "/maxcodesize:", 13)) {
+			sscanf_s(arg, "/maxcodesize:%lu", &g_nCodeSectionSize);
 			if (g_nVerboseLevel > 0) {
 				PRINT_VERBOSE("The size of the sector `.rxtext` is set to %lu bytes.", g_nCodeSectionSize);
 			}
@@ -789,7 +789,7 @@ int main(int argc, char* argv[], char* envp[])
 					std::vector<char> fdata = std::get<1>(data);
 					std::vector<unsigned char> asmdata = Assembly32(dst_poh->ImageBase + codesect_virtualaddress, fdata.data());
 					if (fdata.size() > codesect_rawsize - sizeof(jmpcode)) {
-						PRINT_ERROR("The payload is too large. (Use /bcodesize)");
+						PRINT_ERROR("The payload is too large. (Use /maxcodesize)");
 						return -1;
 					}
 					memcpy(codesect_ptr, asmdata.data(), asmdata.size());
@@ -824,7 +824,7 @@ int main(int argc, char* argv[], char* envp[])
 				if (bIsGood) {
 					std::vector<unsigned char> fdata = std::get<1>(data);
 					if (fdata.size() > codesect_rawsize - sizeof(jmpcode)) {
-						PRINT_ERROR("The payload is too large. (Use /bcodesize)");
+						PRINT_ERROR("The payload is too large. (Use /maxcodesize)");
 						return -1;
 					}
 					memcpy(codesect_ptr, fdata.data(), fdata.size());
