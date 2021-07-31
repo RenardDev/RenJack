@@ -12,6 +12,7 @@
 #include <tuple>
 #include <vector>
 #include <memory>
+#include <string>
 
 // Custom
 #include "ConsoleUtils.h"
@@ -32,12 +33,12 @@
 #define PRINT_STATUS_OK clrprintf(ConsoleColor::Green, "[  OK  ]\n");
 #define PRINT_STATUS_FAIL clrprintf(ConsoleColor::Red, "[ FAIL ]\n");
 
-unsigned long g_nDataSectionSize = 0x1000;
-unsigned long g_nCodeSectionSize = 0x1000;
-unsigned long g_nVerboseLevel = 0;
+DWORD g_unDataSectionSize = 0x1000;
+DWORD g_unCodeSectionSize = 0x1000;
+DWORD g_unVerboseLevel = 0;
 
-std::tuple<HANDLE, HANDLE, void*> MapFile(const char* fpath) {
-	std::tuple<HANDLE, HANDLE, void*> data(nullptr, nullptr, nullptr);
+std::tuple<HANDLE, HANDLE, LPVOID> MapFile(const char* fpath) {
+	std::tuple<HANDLE, HANDLE, LPVOID> data(nullptr, nullptr, nullptr);
 
 	PRINT_STATUS("Opening file...");
 	HANDLE hFile = CreateFileA(fpath, GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -63,7 +64,7 @@ std::tuple<HANDLE, HANDLE, void*> MapFile(const char* fpath) {
 	std::get<1>(data) = hFileMap;
 
 	PRINT_STATUS("Opening the mapping file...")
-	void* pMap = MapViewOfFile(hFileMap, FILE_MAP_READ, 0, 0, 0);
+	LPVOID pMap = MapViewOfFile(hFileMap, FILE_MAP_READ, 0, 0, 0);
 	if (!pMap) {
 		CloseHandle(hFileMap);
 		CloseHandle(hFile);
@@ -78,8 +79,8 @@ std::tuple<HANDLE, HANDLE, void*> MapFile(const char* fpath) {
 	return data;
 }
 
-std::tuple<HANDLE, HANDLE, void*> MapNewFile(const char* fpath, DWORD dwNumberOfBytesToMap) {
-	std::tuple<HANDLE, HANDLE, void*> data(nullptr, nullptr, nullptr);
+std::tuple<HANDLE, HANDLE, LPVOID> MapNewFile(const char* fpath, DWORD dwNumberOfBytesToMap) {
+	std::tuple<HANDLE, HANDLE, LPVOID> data(nullptr, nullptr, nullptr);
 
 	PRINT_STATUS("Creating file...");
 	HANDLE hFile = CreateFileA(fpath, GENERIC_WRITE | GENERIC_READ, 0, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -119,7 +120,7 @@ std::tuple<HANDLE, HANDLE, void*> MapNewFile(const char* fpath, DWORD dwNumberOf
 	std::get<1>(data) = hFileMap;
 
 	PRINT_STATUS("Opening the mapping file...")
-	void* pMap = MapViewOfFile(hFileMap, FILE_MAP_WRITE | FILE_MAP_READ, 0, 0, 0);
+	LPVOID pMap = MapViewOfFile(hFileMap, FILE_MAP_WRITE | FILE_MAP_READ, 0, 0, 0);
 	if (!pMap) {
 		CloseHandle(hFileMap);
 		CloseHandle(hFile);
@@ -134,19 +135,19 @@ std::tuple<HANDLE, HANDLE, void*> MapNewFile(const char* fpath, DWORD dwNumberOf
 	return data;
 }
 
-void UnMapFile(std::tuple<HANDLE, HANDLE, void*> data) {
-	void* pMap = std::get<2>(data);
-	if (!pMap) {
+void UnMapFile(std::tuple<HANDLE, HANDLE, LPVOID> data) {
+	LPVOID pMap = std::get<2>(data);
+	if (pMap) {
 		UnmapViewOfFile(pMap);
 	}
 
 	HANDLE hFileMap = std::get<1>(data);
-	if (!hFileMap) {
+	if (hFileMap) {
 		CloseHandle(hFileMap);
 	}
 
 	HANDLE hFile = std::get<0>(data);
-	if (!hFile) {
+	if (hFile) {
 		CloseHandle(hFile);
 	}
 }
@@ -154,85 +155,293 @@ void UnMapFile(std::tuple<HANDLE, HANDLE, void*> data) {
 #ifdef __clang__
 #define P2ALIGNUP(x, align) (-(-(x) & -(align)))
 #else
-static inline unsigned long Alignment(unsigned long size, unsigned long alignment)
-{
-	if (size % alignment == 0) {
-		return size;
+static inline DWORD P2ALIGNUP(DWORD unSize, DWORD unAlignment) {
+	if (unSize % unAlignment == 0) {
+		return unSize;
 	}
 	else {
-		return (size / alignment + 1) * alignment;
+		return (unSize / unAlignment + 1) * unAlignment;
 	}
 };
-#define P2ALIGNUP(x, align) Alignment(x, align)
 #endif
 
-std::tuple<void*, unsigned long, unsigned long, unsigned long, unsigned long> AppendNewSection32(/*DWORD nFileSize,*/ void* pMap, const char* szName, DWORD nVirtualSize, DWORD nCharacteristics) {
-	PIMAGE_DOS_HEADER dh = reinterpret_cast<PIMAGE_DOS_HEADER>(pMap);
-	PIMAGE_NT_HEADERS32 nth = reinterpret_cast<PIMAGE_NT_HEADERS32>(reinterpret_cast<unsigned char*>(pMap) + dh->e_lfanew);
-	PIMAGE_FILE_HEADER pfh = &(nth->FileHeader);
-	PIMAGE_OPTIONAL_HEADER32 poh = &(nth->OptionalHeader);
-	PIMAGE_SECTION_HEADER pFirstSectionHeader = reinterpret_cast<PIMAGE_SECTION_HEADER>(reinterpret_cast<unsigned char*>(pfh) + sizeof(IMAGE_FILE_HEADER) + pfh->SizeOfOptionalHeader);
-	
-	WORD nNumberOfSections = pfh->NumberOfSections;
-	DWORD nSectionAlignment = poh->SectionAlignment;
+std::tuple<LPVOID, DWORD, DWORD, DWORD, DWORD> AppendNewSection32(LPVOID pMap, LPCSTR szName, DWORD unVirtualSize, DWORD unCharacteristics) {
+	PIMAGE_DOS_HEADER pDH = reinterpret_cast<PIMAGE_DOS_HEADER>(pMap);
+	PIMAGE_NT_HEADERS32 pNTHs = reinterpret_cast<PIMAGE_NT_HEADERS32>(reinterpret_cast<char*>(pMap) + pDH->e_lfanew);
+	PIMAGE_FILE_HEADER pFH = &(pNTHs->FileHeader);
+	PIMAGE_OPTIONAL_HEADER32 pOH = &(pNTHs->OptionalHeader);
 
-	PIMAGE_SECTION_HEADER pNewSectionHeader = &pFirstSectionHeader[nNumberOfSections];
-	PIMAGE_SECTION_HEADER pLastSectionHeader = &pFirstSectionHeader[nNumberOfSections - 1];
+	PIMAGE_SECTION_HEADER pFirstSection = reinterpret_cast<PIMAGE_SECTION_HEADER>(reinterpret_cast<char*>(pFH) + sizeof(IMAGE_FILE_HEADER) + pFH->SizeOfOptionalHeader);
+	WORD unNumberOfSections = pFH->NumberOfSections;
+	DWORD unSectionAlignment = pOH->SectionAlignment;
 
-	memset(pNewSectionHeader, 0, sizeof(IMAGE_SECTION_HEADER));
-	memcpy(pNewSectionHeader->Name, szName, 8);
-	pNewSectionHeader->Misc.VirtualSize = nVirtualSize;
-	pNewSectionHeader->VirtualAddress = P2ALIGNUP(pLastSectionHeader->VirtualAddress + pLastSectionHeader->Misc.VirtualSize, nSectionAlignment);
-	pNewSectionHeader->SizeOfRawData = P2ALIGNUP(nVirtualSize, poh->FileAlignment);
-	//pNewSectionHeader->PointerToRawData = nFileSize;
-	pNewSectionHeader->PointerToRawData = pLastSectionHeader->PointerToRawData + pLastSectionHeader->SizeOfRawData;
-	pNewSectionHeader->Characteristics = nCharacteristics;
+	PIMAGE_SECTION_HEADER pNewSection = &pFirstSection[unNumberOfSections];
+	PIMAGE_SECTION_HEADER pLastSection = &pFirstSection[unNumberOfSections - 1];
 
-	pfh->NumberOfSections = nNumberOfSections + 1;
-	poh->SizeOfImage = P2ALIGNUP(pNewSectionHeader->VirtualAddress + pNewSectionHeader->Misc.VirtualSize, nSectionAlignment);
+	memset(pNewSection, 0, sizeof(IMAGE_SECTION_HEADER));
+	memcpy(pNewSection->Name, szName, 8);
+	pNewSection->Misc.VirtualSize = unVirtualSize;
+	pNewSection->VirtualAddress = P2ALIGNUP(pLastSection->VirtualAddress + pLastSection->Misc.VirtualSize, unSectionAlignment);
+	pNewSection->SizeOfRawData = P2ALIGNUP(unVirtualSize, pOH->FileAlignment);
+	pNewSection->PointerToRawData = pLastSection->PointerToRawData + pLastSection->SizeOfRawData;
+	pNewSection->Characteristics = unCharacteristics;
 
-	return std::tuple<void*, unsigned long, unsigned long, unsigned long, unsigned long>(reinterpret_cast<void*>(reinterpret_cast<unsigned char*>(pMap) + pNewSectionHeader->PointerToRawData), pNewSectionHeader->VirtualAddress, pNewSectionHeader->Misc.VirtualSize, pNewSectionHeader->PointerToRawData, pNewSectionHeader->SizeOfRawData);
+	pFH->NumberOfSections = unNumberOfSections + 1;
+	pOH->SizeOfImage = P2ALIGNUP(pNewSection->VirtualAddress + pNewSection->Misc.VirtualSize, unSectionAlignment);
+
+	return std::tuple<LPVOID, DWORD, DWORD, DWORD, DWORD>(reinterpret_cast<LPVOID>(reinterpret_cast<char*>(pMap) + pNewSection->PointerToRawData), pNewSection->VirtualAddress, pNewSection->Misc.VirtualSize, pNewSection->PointerToRawData, pNewSection->SizeOfRawData);
 }
 
-std::tuple<void*, unsigned long, unsigned long, unsigned long, unsigned long> AppendNewSection64(/*DWORD nFileSize,*/ void* pMap, const char* szName, DWORD nVirtualSize, DWORD nCharacteristics) {
-	PIMAGE_DOS_HEADER dh = reinterpret_cast<PIMAGE_DOS_HEADER>(pMap);
-	PIMAGE_NT_HEADERS64 nth = reinterpret_cast<PIMAGE_NT_HEADERS64>(reinterpret_cast<unsigned char*>(pMap) + dh->e_lfanew);
-	PIMAGE_FILE_HEADER pfh = &(nth->FileHeader);
-	PIMAGE_OPTIONAL_HEADER64 poh = &(nth->OptionalHeader);
-	PIMAGE_SECTION_HEADER pFirstSectionHeader = reinterpret_cast<PIMAGE_SECTION_HEADER>(reinterpret_cast<unsigned char*>(pfh) + sizeof(IMAGE_FILE_HEADER) + pfh->SizeOfOptionalHeader);
+std::tuple<LPVOID, DWORD, DWORD, DWORD, DWORD> AppendNewSection64(LPVOID pMap, LPCSTR szName, DWORD unVirtualSize, DWORD unCharacteristics) {
+	PIMAGE_DOS_HEADER pDH = reinterpret_cast<PIMAGE_DOS_HEADER>(pMap);
+	PIMAGE_NT_HEADERS64 pNTHs = reinterpret_cast<PIMAGE_NT_HEADERS64>(reinterpret_cast<char*>(pMap) + pDH->e_lfanew);
+	PIMAGE_FILE_HEADER pFH = &(pNTHs->FileHeader);
+	PIMAGE_OPTIONAL_HEADER64 pOH = &(pNTHs->OptionalHeader);
 
-	WORD nNumberOfSections = pfh->NumberOfSections;
-	DWORD nSectionAlignment = poh->SectionAlignment;
+	PIMAGE_SECTION_HEADER pFirstSection = reinterpret_cast<PIMAGE_SECTION_HEADER>(reinterpret_cast<char*>(pFH) + sizeof(IMAGE_FILE_HEADER) + pFH->SizeOfOptionalHeader);
+	WORD unNumberOfSections = pFH->NumberOfSections;
+	DWORD unSectionAlignment = pOH->SectionAlignment;
 
-	PIMAGE_SECTION_HEADER pNewSectionHeader = &pFirstSectionHeader[nNumberOfSections];
-	PIMAGE_SECTION_HEADER pLastSectionHeader = &pFirstSectionHeader[nNumberOfSections - 1];
+	PIMAGE_SECTION_HEADER pNewSection = &pFirstSection[unNumberOfSections];
+	PIMAGE_SECTION_HEADER pLastSection = &pFirstSection[unNumberOfSections - 1];
 
-	memset(pNewSectionHeader, 0, sizeof(IMAGE_SECTION_HEADER));
-	memcpy(pNewSectionHeader->Name, szName, 8);
-	pNewSectionHeader->Misc.VirtualSize = nVirtualSize;
-	pNewSectionHeader->VirtualAddress = P2ALIGNUP(pLastSectionHeader->VirtualAddress + pLastSectionHeader->Misc.VirtualSize, nSectionAlignment);
-	pNewSectionHeader->SizeOfRawData = P2ALIGNUP(nVirtualSize, poh->FileAlignment);
-	//pNewSectionHeader->PointerToRawData = nFileSize;
-	pNewSectionHeader->PointerToRawData = pLastSectionHeader->PointerToRawData + pLastSectionHeader->SizeOfRawData;
-	pNewSectionHeader->Characteristics = nCharacteristics;
+	memset(pNewSection, 0, sizeof(IMAGE_SECTION_HEADER));
+	memcpy(pNewSection->Name, szName, 8);
+	pNewSection->Misc.VirtualSize = unVirtualSize;
+	pNewSection->VirtualAddress = P2ALIGNUP(pLastSection->VirtualAddress + pLastSection->Misc.VirtualSize, unSectionAlignment);
+	pNewSection->SizeOfRawData = P2ALIGNUP(unVirtualSize, pOH->FileAlignment);
+	pNewSection->PointerToRawData = pLastSection->PointerToRawData + pLastSection->SizeOfRawData;
+	pNewSection->Characteristics = unCharacteristics;
 
-	pfh->NumberOfSections = nNumberOfSections + 1;
-	poh->SizeOfImage = P2ALIGNUP(pNewSectionHeader->VirtualAddress + pNewSectionHeader->Misc.VirtualSize, nSectionAlignment);
+	pFH->NumberOfSections = unNumberOfSections + 1;
+	pOH->SizeOfImage = P2ALIGNUP(pNewSection->VirtualAddress + pNewSection->Misc.VirtualSize, unSectionAlignment);
 
-	//return std::tuple<void*, unsigned long, unsigned long>(reinterpret_cast<void*>(reinterpret_cast<unsigned long>(pMap) + pNewSectionHeader->PointerToRawData), pNewSectionHeader->SizeOfRawData, pNewSectionHeader->VirtualAddress);
-	return std::tuple<void*, unsigned long, unsigned long, unsigned long, unsigned long>(reinterpret_cast<void*>(reinterpret_cast<unsigned char*>(pMap) + pNewSectionHeader->PointerToRawData), pNewSectionHeader->VirtualAddress, pNewSectionHeader->Misc.VirtualSize, pNewSectionHeader->PointerToRawData, pNewSectionHeader->SizeOfRawData);
+	return std::tuple<LPVOID, DWORD, DWORD, DWORD, DWORD>(reinterpret_cast<LPVOID>(reinterpret_cast<char*>(pMap) + pNewSection->PointerToRawData), pNewSection->VirtualAddress, pNewSection->Misc.VirtualSize, pNewSection->PointerToRawData, pNewSection->SizeOfRawData);
 }
 
 /*
-* TODO: Symbols from Import/Export tables.
-static bool symbol_resolver(const char* symbol, uint64_t* value)
-{
-	// is this the missing symbol "_l1" that we want to handle?
-	if (!strcmp(symbol, "_l1")) {
-		// put value of this symbol in @value
-		*value = 0x1002;
-		// we handled this symbol, so return true
-		return true;
+std::vector<std::tuple<DWORD, WORD, std::string>> GetEAT32(LPVOID pMap) {
+	PIMAGE_DOS_HEADER pDH = reinterpret_cast<PIMAGE_DOS_HEADER>(pMap);
+	PIMAGE_NT_HEADERS32 pNTHs = reinterpret_cast<PIMAGE_NT_HEADERS32>(reinterpret_cast<char*>(pMap) + pDH->e_lfanew);
+	PIMAGE_FILE_HEADER pFH = &(pNTHs->FileHeader);
+	PIMAGE_OPTIONAL_HEADER32 pOH = &(pNTHs->OptionalHeader);
+
+	IMAGE_DATA_DIRECTORY ExportDD = pOH->DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
+
+	PIMAGE_SECTION_HEADER pFirstSection = reinterpret_cast<PIMAGE_SECTION_HEADER>(reinterpret_cast<char*>(pFH) + sizeof(IMAGE_FILE_HEADER) + pFH->SizeOfOptionalHeader);
+
+	std::vector<std::tuple<DWORD, WORD, std::string>> vecData;
+
+	for (DWORD i = 0; i < pFH->NumberOfSections; ++i, ++pFirstSection) {
+		if ((ExportDD.VirtualAddress >= pFirstSection->VirtualAddress) && (ExportDD.VirtualAddress < (pFirstSection->VirtualAddress + pFirstSection->Misc.VirtualSize))) {
+
+			DWORD unDelta = pFirstSection->VirtualAddress - pFirstSection->PointerToRawData;
+
+			PIMAGE_EXPORT_DIRECTORY pExportDirectory = reinterpret_cast<PIMAGE_EXPORT_DIRECTORY>(reinterpret_cast<char*>(pMap) + ExportDD.VirtualAddress - unDelta);
+
+			PDWORD pFunctions = reinterpret_cast<PDWORD>(reinterpret_cast<char*>(pMap) + pExportDirectory->AddressOfFunctions - unDelta);
+			PWORD pOrdinals = reinterpret_cast<PWORD>(reinterpret_cast<char*>(pMap) + pExportDirectory->AddressOfNameOrdinals - unDelta);
+			PCHAR* pNames = reinterpret_cast<PCHAR*>(reinterpret_cast<char*>(pMap) + pExportDirectory->AddressOfNames - unDelta);
+
+			for (DWORD i = 0; i < pExportDirectory->NumberOfFunctions; ++i) {
+				DWORD unFunction = pFunctions[i];
+				if (unFunction == 0) {
+					continue;
+				}
+				for (DWORD j = 0; j < pExportDirectory->NumberOfNames; ++j) {
+					if (pOrdinals[j] == i) {
+						//PRINT_INFO("Export: 0x%08X   `%s`", unFunction, );
+						//std::tuple<DWORD, WORD, std::unique_ptr<char>>()
+						vecData.push_back(std::tuple<DWORD, WORD, std::string>(unFunction, pOrdinals[j], std::string(reinterpret_cast<char*>(pMap) + reinterpret_cast<DWORD>(pNames[j]) - unDelta)));
+					}
+				}
+			}
+		}
+	}
+
+	return vecData;
+}
+
+std::vector<std::tuple<std::string, DWORD, WORD, std::string>> GetIAT32(LPVOID pMap) {
+	PIMAGE_DOS_HEADER pDH = reinterpret_cast<PIMAGE_DOS_HEADER>(pMap);
+	PIMAGE_NT_HEADERS32 pNTHs = reinterpret_cast<PIMAGE_NT_HEADERS32>(reinterpret_cast<char*>(pMap) + pDH->e_lfanew);
+	PIMAGE_FILE_HEADER pFH = &(pNTHs->FileHeader);
+	PIMAGE_OPTIONAL_HEADER32 pOH = &(pNTHs->OptionalHeader);
+
+	IMAGE_DATA_DIRECTORY ImportDD = pOH->DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+
+	PIMAGE_SECTION_HEADER pFirstSection = reinterpret_cast<PIMAGE_SECTION_HEADER>(reinterpret_cast<char*>(pFH) + sizeof(IMAGE_FILE_HEADER) + pFH->SizeOfOptionalHeader);
+
+	std::vector<std::tuple<std::string, DWORD, WORD, std::string>> vecData;
+
+	for (DWORD i = 0; i < pFH->NumberOfSections; ++i, ++pFirstSection) {
+		if ((ImportDD.VirtualAddress >= pFirstSection->VirtualAddress) && (ImportDD.VirtualAddress < (pFirstSection->VirtualAddress + pFirstSection->Misc.VirtualSize))) {
+			char* pRawOffset = reinterpret_cast<char*>(pMap) + pFirstSection->PointerToRawData;
+			
+			PIMAGE_IMPORT_DESCRIPTOR pImportDesc = reinterpret_cast<PIMAGE_IMPORT_DESCRIPTOR>(pRawOffset + (ImportDD.VirtualAddress - pFirstSection->VirtualAddress));
+
+			for (; pImportDesc->Name != 0; ++pImportDesc) {
+
+				//PRINT_INFO("> Module: %s", reinterpret_cast<char*>(pRawOffset + (pImportDesc->Name - pFirstSection->VirtualAddress)));
+
+				DWORD unThunk = pImportDesc->OriginalFirstThunk == 0 ? pImportDesc->FirstThunk : pImportDesc->OriginalFirstThunk;
+				PIMAGE_THUNK_DATA32 pThunkData = reinterpret_cast<PIMAGE_THUNK_DATA32>(pRawOffset + (unThunk - pFirstSection->VirtualAddress));
+
+				for (DWORD i = 0; pThunkData->u1.AddressOfData != 0; ++i, ++pThunkData) {
+					if (pThunkData->u1.Ordinal & IMAGE_ORDINAL_FLAG) {
+						//PRINT_INFO(" -> 0x%08X   `0x%04X` (Ordinal)", pRawOffset + (pThunkData->u1.Function - pFirstSection->VirtualAddress), pThunkData->u1.Ordinal & 0xFFFF);
+						vecData.push_back(std::tuple<std::string, DWORD, WORD, std::string>(std::string(reinterpret_cast<char*>(pRawOffset + (pImportDesc->Name - pFirstSection->VirtualAddress))), pFirstSection->VirtualAddress + 4 * i, pThunkData->u1.Ordinal & 0xFFFF, std::string(nullptr)));
+					}
+					else {
+						PIMAGE_IMPORT_BY_NAME pImportByName = reinterpret_cast<PIMAGE_IMPORT_BY_NAME>(pRawOffset + (pThunkData->u1.AddressOfData - pFirstSection->VirtualAddress));
+						//PRINT_INFO(" -> 0x%08X   `%s`", pFirstSection->VirtualAddress + 4 * i, pImportByName->Name);
+						vecData.push_back(std::tuple<std::string, DWORD, WORD, std::string>(std::string(reinterpret_cast<char*>(pRawOffset + (pImportDesc->Name - pFirstSection->VirtualAddress))), pFirstSection->VirtualAddress + 4 * i, pThunkData->u1.Ordinal & 0xFFFF, std::string(pImportByName->Name)));
+					}
+				}
+
+			}
+		}
+	}
+
+	return vecData;
+}
+
+std::vector<std::tuple<DWORD, WORD, std::string>> GetEAT64(LPVOID pMap) {
+	PIMAGE_DOS_HEADER pDH = reinterpret_cast<PIMAGE_DOS_HEADER>(pMap);
+	PIMAGE_NT_HEADERS64 pNTHs = reinterpret_cast<PIMAGE_NT_HEADERS64>(reinterpret_cast<char*>(pMap) + pDH->e_lfanew);
+	PIMAGE_FILE_HEADER pFH = &(pNTHs->FileHeader);
+	PIMAGE_OPTIONAL_HEADER64 pOH = &(pNTHs->OptionalHeader);
+
+	IMAGE_DATA_DIRECTORY ExportDD = pOH->DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
+
+	PIMAGE_SECTION_HEADER pFirstSection = reinterpret_cast<PIMAGE_SECTION_HEADER>(reinterpret_cast<char*>(pFH) + sizeof(IMAGE_FILE_HEADER) + pFH->SizeOfOptionalHeader);
+
+	std::vector<std::tuple<DWORD, WORD, std::string>> vecData;
+
+	for (DWORD i = 0; i < pFH->NumberOfSections; ++i, ++pFirstSection) {
+		if ((ExportDD.VirtualAddress >= pFirstSection->VirtualAddress) && (ExportDD.VirtualAddress < (pFirstSection->VirtualAddress + pFirstSection->Misc.VirtualSize))) {
+
+			DWORD unDelta = pFirstSection->VirtualAddress - pFirstSection->PointerToRawData;
+
+			PIMAGE_EXPORT_DIRECTORY pExportDirectory = reinterpret_cast<PIMAGE_EXPORT_DIRECTORY>(reinterpret_cast<char*>(pMap) + ExportDD.VirtualAddress - unDelta);
+
+			PDWORD pFunctions = reinterpret_cast<PDWORD>(reinterpret_cast<char*>(pMap) + pExportDirectory->AddressOfFunctions - unDelta);
+			PWORD pOrdinals = reinterpret_cast<PWORD>(reinterpret_cast<char*>(pMap) + pExportDirectory->AddressOfNameOrdinals - unDelta);
+			PCHAR* pNames = reinterpret_cast<PCHAR*>(reinterpret_cast<char*>(pMap) + pExportDirectory->AddressOfNames - unDelta);
+
+			for (DWORD i = 0; i < pExportDirectory->NumberOfFunctions; ++i) {
+				DWORD unFunction = pFunctions[i];
+				if (unFunction == 0) {
+					continue;
+				}
+				for (DWORD j = 0; j < pExportDirectory->NumberOfNames; ++j) {
+					if (pOrdinals[j] == i) {
+						//PRINT_INFO("Export: 0x%08X   `%s`", unFunction, );
+						//std::tuple<DWORD, WORD, std::unique_ptr<char>>()
+						vecData.push_back(std::tuple<DWORD, WORD, std::string>(unFunction, pOrdinals[j], std::string(reinterpret_cast<char*>(pMap) + reinterpret_cast<DWORD>(pNames[j]) - unDelta)));
+					}
+				}
+			}
+		}
+	}
+
+	return vecData;
+}
+
+std::vector<std::tuple<std::string, DWORD, WORD, std::string>> GetIAT64(LPVOID pMap) {
+	PIMAGE_DOS_HEADER pDH = reinterpret_cast<PIMAGE_DOS_HEADER>(pMap);
+	PIMAGE_NT_HEADERS64 pNTHs = reinterpret_cast<PIMAGE_NT_HEADERS64>(reinterpret_cast<char*>(pMap) + pDH->e_lfanew);
+	PIMAGE_FILE_HEADER pFH = &(pNTHs->FileHeader);
+	PIMAGE_OPTIONAL_HEADER64 pOH = &(pNTHs->OptionalHeader);
+
+	IMAGE_DATA_DIRECTORY ImportDD = pOH->DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+
+	PIMAGE_SECTION_HEADER pFirstSection = reinterpret_cast<PIMAGE_SECTION_HEADER>(reinterpret_cast<char*>(pFH) + sizeof(IMAGE_FILE_HEADER) + pFH->SizeOfOptionalHeader);
+
+	std::vector<std::tuple<std::string, DWORD, WORD, std::string>> vecData;
+
+	for (DWORD i = 0; i < pFH->NumberOfSections; ++i, ++pFirstSection) {
+		if ((ImportDD.VirtualAddress >= pFirstSection->VirtualAddress) && (ImportDD.VirtualAddress < (pFirstSection->VirtualAddress + pFirstSection->Misc.VirtualSize))) {
+			char* pRawOffset = reinterpret_cast<char*>(pMap) + pFirstSection->PointerToRawData;
+
+			PIMAGE_IMPORT_DESCRIPTOR pImportDesc = reinterpret_cast<PIMAGE_IMPORT_DESCRIPTOR>(pRawOffset + (ImportDD.VirtualAddress - pFirstSection->VirtualAddress));
+
+			for (; pImportDesc->Name != 0; ++pImportDesc) {
+
+				//PRINT_INFO("> Module: %s", reinterpret_cast<char*>(pRawOffset + (pImportDesc->Name - pFirstSection->VirtualAddress)));
+
+				DWORD unThunk = pImportDesc->OriginalFirstThunk == 0 ? pImportDesc->FirstThunk : pImportDesc->OriginalFirstThunk;
+				PIMAGE_THUNK_DATA32 pThunkData = reinterpret_cast<PIMAGE_THUNK_DATA32>(pRawOffset + (unThunk - pFirstSection->VirtualAddress));
+
+				for (DWORD i = 0; pThunkData->u1.AddressOfData != 0; ++i, ++pThunkData) {
+					if (pThunkData->u1.Ordinal & IMAGE_ORDINAL_FLAG) {
+						//PRINT_INFO(" -> 0x%08X   `0x%04X` (Ordinal)", pRawOffset + (pThunkData->u1.Function - pFirstSection->VirtualAddress), pThunkData->u1.Ordinal & 0xFFFF);
+						vecData.push_back(std::tuple<std::string, DWORD, WORD, std::string>(std::string(reinterpret_cast<char*>(pRawOffset + (pImportDesc->Name - pFirstSection->VirtualAddress))), pFirstSection->VirtualAddress + 4 * i, pThunkData->u1.Ordinal & 0xFFFF, std::string(nullptr)));
+					}
+					else {
+						PIMAGE_IMPORT_BY_NAME pImportByName = reinterpret_cast<PIMAGE_IMPORT_BY_NAME>(pRawOffset + (pThunkData->u1.AddressOfData - pFirstSection->VirtualAddress));
+						//PRINT_INFO(" -> 0x%08X   `%s`", pFirstSection->VirtualAddress + 4 * i, pImportByName->Name);
+						vecData.push_back(std::tuple<std::string, DWORD, WORD, std::string>(std::string(reinterpret_cast<char*>(pRawOffset + (pImportDesc->Name - pFirstSection->VirtualAddress))), pFirstSection->VirtualAddress + 4 * i, pThunkData->u1.Ordinal & 0xFFFF, std::string(pImportByName->Name)));
+					}
+				}
+
+			}
+		}
+	}
+
+	return vecData;
+}
+
+std::vector<std::tuple<DWORD, WORD, std::string>> vecExports;
+std::vector<std::tuple<std::string, DWORD, WORD, std::string>> vecImports;
+
+static bool assembly_symbol_resolver(const char* szSymbol, uint64_t* value) {
+	if (!strncmp(szSymbol, "export_", 7)) {
+		char szExport[1024];
+		memset(szExport, 0, sizeof(szExport));
+		sscanf_s(szSymbol, "export_%s", szExport, sizeof(szExport) - 1);
+		if (strnlen_s(szExport, sizeof(szExport) - 1) > 0) {
+
+			PRINT_STATUS("Finding Export...");
+
+			for (std::vector<std::tuple<DWORD, WORD, std::string>>::iterator it = vecExports.begin(); it != vecExports.end(); ++it) {
+				
+				DWORD unFunction = std::get<0>(*it);
+				std::string strName = std::get<2>(*it);
+
+				if (strName == szExport) {
+					PRINT_STATUS_OK;
+					*value = unTo - unFunction + *value - 5;
+					return true;
+				}
+			}
+
+			PRINT_STATUS_FAIL;
+		}
+	}
+
+	if (!strncmp(szSymbol, "import_", 7)) {
+		char szImport[1024];
+		memset(szImport, 0, sizeof(szImport));
+		sscanf_s(szSymbol, "import_%s", szImport, sizeof(szImport) - 1);
+		if (strnlen_s(szImport, sizeof(szImport) - 1) > 0) {
+
+			PRINT_STATUS("Finding Import...");
+
+			for (std::vector<std::tuple<std::string, DWORD, WORD, std::string>>::iterator it = vecImports.begin(); it != vecImports.end(); ++it) {
+
+				DWORD unFunction = std::get<1>(*it);
+				std::string strName = std::get<3>(*it);
+
+				if (strName == szImport) {
+					PRINT_STATUS_OK;
+					*value = unTo - unFunction + *value - 5;
+					return true;
+				}
+			}
+
+			PRINT_STATUS_FAIL;
+		}
 	}
 
 	return false;
@@ -326,16 +535,18 @@ bool WriteBinaryFile(const char* fpath, std::vector<unsigned char> data) {
 	return true;
 }
 
-std::vector<unsigned char> Assembly32(unsigned long nBaseAddress, const char* szAsm) {
+std::vector<unsigned char> Assembly32(DWORD nBaseAddress, PCHAR szAsm) {
 	std::vector<unsigned char> data;
 	ks_engine* ks = nullptr;
 	if (ks_open(KS_ARCH_X86, KS_MODE_32, &ks) == KS_ERR_OK) {
+		//ks_option(ks, KS_OPT_SYM_RESOLVER, reinterpret_cast<size_t>(assembly_symbol_resolver));
+
 		unsigned char* encoding = nullptr;
 		size_t encoding_size = 0;
 		size_t start_count = 0;
 		
 		if (ks_asm(ks, szAsm, nBaseAddress, &encoding, &encoding_size, &start_count) != KS_ERR_OK) {
-			PRINT_ERROR("Unable to build assembly.");
+			PRINT_ERROR("Unable to build assembly. (err = %d)", ks_errno(ks));
 			return data;
 		}
 
@@ -347,10 +558,12 @@ std::vector<unsigned char> Assembly32(unsigned long nBaseAddress, const char* sz
 	return data;
 }
 
-std::vector<unsigned char> Assembly64(unsigned long long nBaseAddress, const char* szAsm) {
+std::vector<unsigned char> Assembly64(DWORD nBaseAddress, PCHAR szAsm) {
 	std::vector<unsigned char> data;
 	ks_engine* ks = nullptr;
 	if (ks_open(KS_ARCH_X86, KS_MODE_64, &ks) == KS_ERR_OK) {
+		//ks_option(ks, KS_OPT_SYM_RESOLVER, reinterpret_cast<size_t>(assembly_symbol_resolver));
+
 		unsigned char* encoding = nullptr;
 		size_t encoding_size = 0;
 		size_t start_count = 0;
@@ -370,7 +583,7 @@ std::vector<unsigned char> Assembly64(unsigned long long nBaseAddress, const cha
 
 int main(int argc, char* argv[], char* envp[])
 {
-	clrprintf(ConsoleColor::White, "RenJack by Ren (zeze839@gmail.com) [Version 1.0.0.0]\n\n");
+	clrprintf(ConsoleColor::White, "RenJack by Ren (zeze839@gmail.com) [Version 1.0.0.1]\n\n");
 	
 	char szMainFileName[32];
 	memset(szMainFileName, 0, sizeof(szMainFileName));
@@ -419,53 +632,53 @@ int main(int argc, char* argv[], char* envp[])
 	memset(szOutputFile, 0, sizeof(szOutputFile));
 
 	for (int i = 0; i < argc; ++i) {
-		const char* arg = argv[i];
-		if (!strncmp(arg, "/verbose:", 9)) {
-			sscanf_s(arg, "/verbose:%lu", &g_nVerboseLevel);
-			if (g_nVerboseLevel > 0) {
-				PRINT_VERBOSE("The verbosity level is set to `%lu`.", g_nVerboseLevel);
+		const char* szArg = argv[i];
+		if (!strncmp(szArg, "/verbose:", 9)) {
+			sscanf_s(szArg, "/verbose:%lu", &g_unVerboseLevel);
+			if (g_unVerboseLevel > 0) {
+				PRINT_VERBOSE("The verbosity level is set to `%lu`.", g_unVerboseLevel);
 			}
 			continue;
 		}
-		if (!strncmp(arg, "/maxdatasize:", 13)) {
-			sscanf_s(arg, "/maxdatasize:%lu", &g_nDataSectionSize);
-			if (g_nVerboseLevel > 0) {
-				PRINT_VERBOSE("The size of the sector `.rxdata` is set to %lu bytes.", g_nDataSectionSize);
+		if (!strncmp(szArg, "/maxdatasize:", 13)) {
+			sscanf_s(szArg, "/maxdatasize:%lu", &g_unDataSectionSize);
+			if (g_unVerboseLevel > 0) {
+				PRINT_VERBOSE("The size of the sector `.rxdata` is set to %lu bytes.", g_unDataSectionSize);
 			}
 			continue;
 		}
-		if (!strncmp(arg, "/maxcodesize:", 13)) {
-			sscanf_s(arg, "/maxcodesize:%lu", &g_nCodeSectionSize);
-			if (g_nVerboseLevel > 0) {
-				PRINT_VERBOSE("The size of the sector `.rxtext` is set to %lu bytes.", g_nCodeSectionSize);
+		if (!strncmp(szArg, "/maxcodesize:", 13)) {
+			sscanf_s(szArg, "/maxcodesize:%lu", &g_unCodeSectionSize);
+			if (g_unVerboseLevel > 0) {
+				PRINT_VERBOSE("The size of the sector `.rxtext` is set to %lu bytes.", g_unCodeSectionSize);
 			}
 			continue;
 		}
-		if (!strncmp(arg, "/disabledep", 11)) {
-			if (g_nVerboseLevel > 0) {
+		if (!strncmp(szArg, "/disabledep", 11)) {
+			if (g_unVerboseLevel > 0) {
 				PRINT_VERBOSE("DEP is disabled.");
 				bDisableDEP = true;
 			}
 			continue;
 		}
-		if (!strncmp(arg, "/disableaslr", 12)) {
-			if (g_nVerboseLevel > 0) {
+		if (!strncmp(szArg, "/disableaslr", 12)) {
+			if (g_unVerboseLevel > 0) {
 				PRINT_VERBOSE("ASLR is disabled.");
 				bDisableASLR = true;
 			}
 			continue;
 		}
-		if (!strncmp(arg, "/forceguardcf", 13)) {
-			if (g_nVerboseLevel > 0) {
+		if (!strncmp(szArg, "/forceguardcf", 13)) {
+			if (g_unVerboseLevel > 0) {
 				PRINT_VERBOSE("Enabled force processing for GuardCF protected executable.");
 				bForceGuardCF = true;
 			}
 			continue;
 		}
-		if (!strncmp(arg, "/input:", 7)) {
+		if (!strncmp(szArg, "/input:", 7)) {
 			char szFile[1024];
 			memset(szFile, 0, sizeof(szFile));
-			sscanf_s(arg, "/input:%s", szFile, sizeof(szFile) - 1);
+			sscanf_s(szArg, "/input:%s", szFile, sizeof(szFile) - 1);
 			if (strnlen_s(szFile, sizeof(szFile) - 1) > 0) {
 				char szFileExt[32];
 				memset(szFileExt, 0, sizeof(szFileExt));
@@ -490,10 +703,10 @@ int main(int argc, char* argv[], char* envp[])
 			}
 			continue;
 		}
-		if (!strncmp(arg, "/payload:", 9)) {
+		if (!strncmp(szArg, "/payload:", 9)) {
 			char szFile[1024];
 			memset(szFile, 0, sizeof(szFile));
-			sscanf_s(arg, "/payload:%s", szFile, sizeof(szFile) - 1);
+			sscanf_s(szArg, "/payload:%s", szFile, sizeof(szFile) - 1);
 			if (strnlen_s(szFile, sizeof(szFile) - 1) > 0) {
 				char szFileExt[32];
 				memset(szFileExt, 0, sizeof(szFileExt));
@@ -515,14 +728,14 @@ int main(int argc, char* argv[], char* envp[])
 			}
 			continue;
 		}
-		if (!strncmp(arg, "/savepayload", 12)) {
+		if (!strncmp(szArg, "/savepayload", 12)) {
 			bSavePayload = true;
 			continue;
 		}
-		if (!strncmp(arg, "/outputpayload:", 15)) {
+		if (!strncmp(szArg, "/outputpayload:", 15)) {
 			char szFile[1024];
 			memset(szFile, 0, sizeof(szFile));
-			sscanf_s(arg, "/outputpayload:%s", szFile, sizeof(szFile) - 1);
+			sscanf_s(szArg, "/outputpayload:%s", szFile, sizeof(szFile) - 1);
 			if (strnlen_s(szFile, sizeof(szFile) - 1) > 0) {
 				char szFileExt[32];
 				memset(szFileExt, 0, sizeof(szFileExt));
@@ -539,10 +752,10 @@ int main(int argc, char* argv[], char* envp[])
 			}
 			continue;
 		}
-		if (!strncmp(arg, "/output:", 8)) {
+		if (!strncmp(szArg, "/output:", 8)) {
 			char szFile[1024];
 			memset(szFile, 0, sizeof(szFile));
-			sscanf_s(arg, "/output:%s", szFile, sizeof(szFile) - 1);
+			sscanf_s(szArg, "/output:%s", szFile, sizeof(szFile) - 1);
 			if (strnlen_s(szFile, sizeof(szFile) - 1) > 0) {
 				char szFileExt[32];
 				memset(szFileExt, 0, sizeof(szFileExt));
@@ -556,12 +769,12 @@ int main(int argc, char* argv[], char* envp[])
 		}
 	}
 
-	if (g_nDataSectionSize < 0x1000) {
+	if (g_unDataSectionSize < 0x1000) {
 		PRINT_ERROR("Minimum `.rxdata` size is 4096.");
 		return -1;
 	}
 
-	if (g_nCodeSectionSize < 0x1000) {
+	if (g_unCodeSectionSize < 0x1000) {
 		PRINT_ERROR("Minimum `.rxtext` size is 4096.");
 		return -1;
 	}
@@ -614,7 +827,7 @@ int main(int argc, char* argv[], char* envp[])
 
 	PRINT_POSITIVE("Target: %s", szOutputFile);
 
-	if (g_nVerboseLevel >= 1) {
+	if (g_unVerboseLevel >= 1) {
 		PRINT_VERBOSE("InputFile=\"%s\"", szInputFile);
 		if (strnlen_s(szPayloadFile, sizeof(szPayloadFile))) {
 			PRINT_VERBOSE("PayloadFile=\"%s\"", szPayloadFile);
@@ -625,11 +838,11 @@ int main(int argc, char* argv[], char* envp[])
 	}
 
 	PRINT_INFO("Working with Source...");
-	std::tuple<HANDLE, HANDLE, void*> src = MapFile(szInputFile);
+	std::tuple<HANDLE, HANDLE, LPVOID> src = MapFile(szInputFile);
 	
 	HANDLE hSrcFile = std::get<0>(src);
 	HANDLE hSrcFileMap = std::get<1>(src);
-	void* pSrcMap = std::get<2>(src);
+	LPVOID pSrcMap = std::get<2>(src);
 
 	if (!hSrcFile) {
 		return -1;
@@ -643,60 +856,59 @@ int main(int argc, char* argv[], char* envp[])
 		return -1;
 	}
 
-	if ((*reinterpret_cast<unsigned short*>(pSrcMap)) != 0x5A4D) { // if src[0:2] == 'MZ' {
-		PRINT_ERROR("Invalid HEAD signature.");
-		return -1;
-	}
-
-	DWORD nFileSize = GetFileSize(hSrcFile, nullptr);
-	if (nFileSize < 0) {
+	DWORD unFileSize = GetFileSize(hSrcFile, nullptr);
+	if (unFileSize < 0) {
 		PRINT_ERROR("The file is too small.");
 		return -1;
 	}
 
-	if (nFileSize < sizeof(IMAGE_DOS_HEADER)) {
+	if (unFileSize < sizeof(IMAGE_DOS_HEADER)) {
 		PRINT_ERROR("The file is too small.");
 		return -1;
 	}
 
-	PRINT_POSITIVE("SourceSize: %lu bytes.", nFileSize);
+	PRINT_POSITIVE("SourceSize: %lu bytes.", unFileSize);
 
-	PIMAGE_DOS_HEADER src_dh = reinterpret_cast<PIMAGE_DOS_HEADER>(std::get<2>(src));
-	if (src_dh->e_magic != IMAGE_DOS_SIGNATURE) {
+	PIMAGE_DOS_HEADER pSrcDH = reinterpret_cast<PIMAGE_DOS_HEADER>(std::get<2>(src));
+	if (pSrcDH->e_magic != IMAGE_DOS_SIGNATURE) {
 		PRINT_ERROR("Invalid DOS signature.");
 		return -1;
 	}
 
-	PIMAGE_NT_HEADERS src_nth = reinterpret_cast<PIMAGE_NT_HEADERS>(reinterpret_cast<unsigned char*>(src_dh) + src_dh->e_lfanew);
-	if (src_nth->Signature != IMAGE_NT_SIGNATURE) {
+	PIMAGE_NT_HEADERS pSrcNTHs = reinterpret_cast<PIMAGE_NT_HEADERS>(reinterpret_cast<unsigned char*>(pSrcDH) + pSrcDH->e_lfanew);
+	if (pSrcNTHs->Signature != IMAGE_NT_SIGNATURE) {
 		PRINT_ERROR("Invalid PE signature.");
 		return -1;
 	}
 
 	HANDLE hDstFile = nullptr;
 	HANDLE hDstFileMap = nullptr;
-	void* pDstMap = nullptr;
+	LPVOID pDstMap = nullptr;
 
-	PIMAGE_FILE_HEADER src_pfh = &(src_nth->FileHeader);
-	if (src_pfh->Machine == IMAGE_FILE_MACHINE_I386) {
+	PIMAGE_FILE_HEADER pSrcFH = &(pSrcNTHs->FileHeader);
+	if (pSrcFH->Machine == IMAGE_FILE_MACHINE_I386) {
 		PRINT_INFO("Detected 32BIT machine.");
-		PIMAGE_OPTIONAL_HEADER32 src_poh = reinterpret_cast<PIMAGE_OPTIONAL_HEADER32>(&(src_nth->OptionalHeader));
-		if (src_poh->Magic != IMAGE_NT_OPTIONAL_HDR32_MAGIC) {
+
+		//vecExports = GetEAT32(pSrcMap);
+		//vecImports = GetIAT32(pSrcMap);
+
+		PIMAGE_OPTIONAL_HEADER32 pSrcOH = reinterpret_cast<PIMAGE_OPTIONAL_HEADER32>(&(pSrcNTHs->OptionalHeader));
+		if (pSrcOH->Magic != IMAGE_NT_OPTIONAL_HDR32_MAGIC) {
 			PRINT_ERROR("Invalid optional PE signature.");
 			return -1;
 		}
 
-		if ((src_poh->DllCharacteristics & IMAGE_DLLCHARACTERISTICS_GUARD_CF) && !bForceGuardCF) {
+		if ((pSrcOH->DllCharacteristics & IMAGE_DLLCHARACTERISTICS_GUARD_CF) && !bForceGuardCF) {
 			PRINT_ERROR("This application is protected from this injection method.");
 			return -1;
 		}
 
 		PRINT_INFO("Working with Target...");
 
-		DWORD nNewFileSize = P2ALIGNUP(nFileSize + g_nDataSectionSize + g_nCodeSectionSize, src_poh->FileAlignment);
-		PRINT_POSITIVE("TargetSize: %lu bytes.", nNewFileSize);
+		DWORD unNewFileSize = P2ALIGNUP(unFileSize + g_unDataSectionSize + g_unCodeSectionSize, pSrcOH->FileAlignment);
+		PRINT_POSITIVE("TargetSize: %lu bytes.", unNewFileSize);
 
-		std::tuple<HANDLE, HANDLE, void*> dst = MapNewFile(szOutputFile, nNewFileSize);
+		std::tuple<HANDLE, HANDLE, LPVOID> dst = MapNewFile(szOutputFile, unNewFileSize);
 
 		hDstFile = std::get<0>(dst);
 		hDstFileMap = std::get<1>(dst);
@@ -716,35 +928,35 @@ int main(int argc, char* argv[], char* envp[])
 			return -1;
 		}
 
-		PIMAGE_DOS_HEADER dst_dh = reinterpret_cast<PIMAGE_DOS_HEADER>(pDstMap);
-		PIMAGE_NT_HEADERS32 dst_nth = reinterpret_cast<PIMAGE_NT_HEADERS32>(reinterpret_cast<unsigned char*>(dst_dh) + dst_dh->e_lfanew);
-		PIMAGE_OPTIONAL_HEADER32 dst_poh = &(dst_nth->OptionalHeader);
+		PIMAGE_DOS_HEADER pDstDH = reinterpret_cast<PIMAGE_DOS_HEADER>(pDstMap);
+		PIMAGE_NT_HEADERS32 pDstNTHs = reinterpret_cast<PIMAGE_NT_HEADERS32>(reinterpret_cast<unsigned char*>(pDstDH) + pDstDH->e_lfanew);
+		PIMAGE_OPTIONAL_HEADER32 pDstOH = &(pDstNTHs->OptionalHeader);
 
 		if (bDisableDEP) {
-			dst_poh->DllCharacteristics &= ~IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE;
+			pDstOH->DllCharacteristics &= ~IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE;
 		}
 
 		if (bDisableASLR) {
-			dst_poh->DllCharacteristics &= ~IMAGE_DLLCHARACTERISTICS_NX_COMPAT;
+			pDstOH->DllCharacteristics &= ~IMAGE_DLLCHARACTERISTICS_NX_COMPAT;
 		}
 
-		if (g_nVerboseLevel >= 1) {
+		if (g_unVerboseLevel >= 1) {
 			PRINT_VERBOSE("Copying data from Source to Target...")
 		}
-		memcpy(std::get<2>(dst), std::get<2>(src), nFileSize);
-		if (g_nVerboseLevel >= 1) {
+		memcpy(std::get<2>(dst), std::get<2>(src), unFileSize);
+		if (g_unVerboseLevel >= 1) {
 			PRINT_VERBOSE("Appending sectors...")
 		}
 
-		std::tuple<void*, unsigned long, unsigned long, unsigned long, unsigned long> datasect = AppendNewSection32(/*nFileSize,*/ pDstMap, ".rxdata", g_nDataSectionSize, IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE);
-		void* datasect_ptr = std::get<0>(datasect);
-		unsigned long datasect_virtualaddress = std::get<1>(datasect);
-		unsigned long datasect_virtualsize = std::get<2>(datasect);
-		unsigned long datasect_rawaddress = std::get<3>(datasect);
-		unsigned long datasect_rawsize = std::get<4>(datasect);
+		std::tuple<LPVOID, DWORD, DWORD, DWORD, DWORD> datasect = AppendNewSection32(pDstMap, ".rxdata", g_unDataSectionSize, IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE);
+		LPVOID datasect_ptr = std::get<0>(datasect);
+		DWORD datasect_virtualaddress = std::get<1>(datasect);
+		DWORD datasect_virtualsize = std::get<2>(datasect);
+		DWORD datasect_rawaddress = std::get<3>(datasect);
+		DWORD datasect_rawsize = std::get<4>(datasect);
 
 		PRINT_POSITIVE("Section `.rxdata` has been added.");
-		PRINT_INFO("ImageAddress:   0x%08X", dst_poh->ImageBase + datasect_virtualaddress);
+		PRINT_INFO("ImageAddress:   0x%08X", pDstOH->ImageBase + datasect_virtualaddress);
 		PRINT_INFO("VirtualAddress: 0x%08X", datasect_virtualaddress);
 		PRINT_INFO("VirtualSize:    0x%08X", datasect_virtualsize);
 		PRINT_INFO("RawAddress:     0x%08X", datasect_rawaddress);
@@ -752,15 +964,15 @@ int main(int argc, char* argv[], char* envp[])
 
 		memset(datasect_ptr, 0x00 /* NULLs... */, datasect_rawsize);
 
-		std::tuple<void*, unsigned long, unsigned long, unsigned long, unsigned long> codesect = AppendNewSection32(/*nFileSize,*/ pDstMap, ".rxtext", g_nCodeSectionSize, IMAGE_SCN_CNT_CODE | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_READ);
-		void* codesect_ptr = std::get<0>(codesect);
-		unsigned long codesect_virtualaddress = std::get<1>(codesect);
-		unsigned long codesect_virtualsize = std::get<2>(codesect);
-		unsigned long codesect_rawaddress = std::get<3>(codesect);
-		unsigned long codesect_rawsize = std::get<4>(codesect);
+		std::tuple<LPVOID, DWORD, DWORD, DWORD, DWORD> codesect = AppendNewSection32(pDstMap, ".rxtext", g_unCodeSectionSize, IMAGE_SCN_CNT_CODE | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_READ);
+		LPVOID codesect_ptr = std::get<0>(codesect);
+		DWORD codesect_virtualaddress = std::get<1>(codesect);
+		DWORD codesect_virtualsize = std::get<2>(codesect);
+		DWORD codesect_rawaddress = std::get<3>(codesect);
+		DWORD codesect_rawsize = std::get<4>(codesect);
 
 		PRINT_POSITIVE("Section `.rxtext` has been added.");
-		PRINT_INFO("ImageAddress:   0x%08X", dst_poh->ImageBase + codesect_virtualaddress);
+		PRINT_INFO("ImageAddress:   0x%08X", pDstOH->ImageBase + codesect_virtualaddress);
 		PRINT_INFO("VirtualAddress: 0x%08X", codesect_virtualaddress);
 		PRINT_INFO("VirtualSize:    0x%08X", codesect_virtualsize);
 		PRINT_INFO("RawAddress:     0x%08X", codesect_rawaddress);
@@ -772,12 +984,14 @@ int main(int argc, char* argv[], char* envp[])
 		unsigned char jmpcode[5];
 		memset(jmpcode, 0, sizeof(jmpcode));
 		jmpcode[0] = 0xE9;
-		*reinterpret_cast<unsigned long*>(jmpcode + 1) = dst_poh->AddressOfEntryPoint - (codesect_virtualaddress + codesect_rawsize - sizeof(jmpcode)) - 5;
+		*reinterpret_cast<DWORD*>(jmpcode + 1) = pDstOH->AddressOfEntryPoint - (codesect_virtualaddress + codesect_rawsize - sizeof(jmpcode)) - 5;
 		memcpy(reinterpret_cast<unsigned char*>(codesect_ptr) + codesect_rawsize - sizeof(jmpcode), jmpcode, sizeof(jmpcode));
 		PRINT_STATUS_OK;
 
+		//unTo = codesect_virtualaddress;
+
 		PRINT_STATUS("Changing EntryPoint...");
-		dst_poh->AddressOfEntryPoint = codesect_virtualaddress;
+		pDstOH->AddressOfEntryPoint = codesect_virtualaddress;
 		PRINT_STATUS_OK;
 
 		if (strnlen_s(szPayloadFile, sizeof(szPayloadFile))) {
@@ -787,7 +1001,7 @@ int main(int argc, char* argv[], char* envp[])
 				bool bIsGood = std::get<0>(data);
 				if (bIsGood) {
 					std::vector<char> fdata = std::get<1>(data);
-					std::vector<unsigned char> asmdata = Assembly32(dst_poh->ImageBase + codesect_virtualaddress, fdata.data());
+					std::vector<unsigned char> asmdata = Assembly32(pDstOH->ImageBase + codesect_virtualaddress, fdata.data());
 					if (fdata.size() > codesect_rawsize - sizeof(jmpcode)) {
 						PRINT_ERROR("The payload is too large. (Use /maxcodesize)");
 						return -1;
@@ -834,25 +1048,29 @@ int main(int argc, char* argv[], char* envp[])
 		}
 
 	}
-	else if (src_pfh->Machine == IMAGE_FILE_MACHINE_AMD64) {
+	else if (pSrcFH->Machine == IMAGE_FILE_MACHINE_AMD64) {
 		PRINT_INFO("Detected 64BIT machine.");
-		PIMAGE_OPTIONAL_HEADER64 src_poh = reinterpret_cast<PIMAGE_OPTIONAL_HEADER64>(&(src_nth->OptionalHeader));
-		if (src_poh->Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC) {
+
+		//vecExports = GetEAT64(pSrcMap);
+		//vecImports = GetIAT64(pSrcMap);
+
+		PIMAGE_OPTIONAL_HEADER64 pSrcOH = reinterpret_cast<PIMAGE_OPTIONAL_HEADER64>(&(pSrcNTHs->OptionalHeader));
+		if (pSrcOH->Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC) {
 			PRINT_ERROR("Invalid optional PE signature.");
 			return -1;
 		}
 
-		if ((src_poh->DllCharacteristics & IMAGE_DLLCHARACTERISTICS_GUARD_CF) && !bForceGuardCF) {
+		if ((pSrcOH->DllCharacteristics & IMAGE_DLLCHARACTERISTICS_GUARD_CF) && !bForceGuardCF) {
 			PRINT_ERROR("This application is protected from this injection method.");
 			return -1;
 		}
 
 		PRINT_INFO("Working with Target...");
 
-		DWORD nNewFileSize = P2ALIGNUP(nFileSize + g_nDataSectionSize + g_nCodeSectionSize, src_poh->FileAlignment);
-		PRINT_POSITIVE("TargetSize: %lu bytes.", nNewFileSize);
+		DWORD unNewFileSize = P2ALIGNUP(unFileSize + g_unDataSectionSize + g_unCodeSectionSize, pSrcOH->FileAlignment);
+		PRINT_POSITIVE("TargetSize: %lu bytes.", unNewFileSize);
 
-		std::tuple<HANDLE, HANDLE, void*> dst = MapNewFile(szOutputFile, nNewFileSize);
+		std::tuple<HANDLE, HANDLE, LPVOID> dst = MapNewFile(szOutputFile, unNewFileSize);
 
 		hDstFile = std::get<0>(dst);
 		hDstFileMap = std::get<1>(dst);
@@ -872,35 +1090,35 @@ int main(int argc, char* argv[], char* envp[])
 			return -1;
 		}
 
-		PIMAGE_DOS_HEADER dst_dh = reinterpret_cast<PIMAGE_DOS_HEADER>(pDstMap);
-		PIMAGE_NT_HEADERS64 dst_nth = reinterpret_cast<PIMAGE_NT_HEADERS64>(reinterpret_cast<unsigned char*>(dst_dh) + dst_dh->e_lfanew);
-		PIMAGE_OPTIONAL_HEADER64 dst_poh = &(dst_nth->OptionalHeader);
+		PIMAGE_DOS_HEADER pDstDH = reinterpret_cast<PIMAGE_DOS_HEADER>(pDstMap);
+		PIMAGE_NT_HEADERS64 pDstNTHs = reinterpret_cast<PIMAGE_NT_HEADERS64>(reinterpret_cast<unsigned char*>(pDstDH) + pDstDH->e_lfanew);
+		PIMAGE_OPTIONAL_HEADER64 pDstOH = &(pDstNTHs->OptionalHeader);
 
 		if (bDisableDEP) {
-			dst_poh->DllCharacteristics &= ~IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE;
+			pDstOH->DllCharacteristics &= ~IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE;
 		}
 
 		if (bDisableASLR) {
-			dst_poh->DllCharacteristics &= ~IMAGE_DLLCHARACTERISTICS_NX_COMPAT;
+			pDstOH->DllCharacteristics &= ~IMAGE_DLLCHARACTERISTICS_NX_COMPAT;
 		}
 
-		if (g_nVerboseLevel >= 1) {
+		if (g_unVerboseLevel >= 1) {
 			PRINT_VERBOSE("Copying data from Source to Target...")
 		}
-		memcpy(std::get<2>(dst), std::get<2>(src), nFileSize);
-		if (g_nVerboseLevel >= 1) {
+		memcpy(std::get<2>(dst), std::get<2>(src), unFileSize);
+		if (g_unVerboseLevel >= 1) {
 			PRINT_VERBOSE("Appending sectors...")
 		}
 
-		std::tuple<void*, unsigned long, unsigned long, unsigned long, unsigned long> datasect = AppendNewSection64(/*nFileSize,*/ pDstMap, ".rxdata", g_nDataSectionSize, IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE);
-		void* datasect_ptr = std::get<0>(datasect);
-		unsigned long datasect_virtualaddress = std::get<1>(datasect);
-		unsigned long datasect_virtualsize = std::get<2>(datasect);
-		unsigned long datasect_rawaddress = std::get<3>(datasect);
-		unsigned long datasect_rawsize = std::get<4>(datasect);
+		std::tuple<LPVOID, DWORD, DWORD, DWORD, DWORD> datasect = AppendNewSection64(pDstMap, ".rxdata", g_unDataSectionSize, IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE);
+		LPVOID datasect_ptr = std::get<0>(datasect);
+		DWORD datasect_virtualaddress = std::get<1>(datasect);
+		DWORD datasect_virtualsize = std::get<2>(datasect);
+		DWORD datasect_rawaddress = std::get<3>(datasect);
+		DWORD datasect_rawsize = std::get<4>(datasect);
 
 		PRINT_POSITIVE("Section `.rxdata` has been added.");
-		PRINT_INFO("ImageAddress:   0x%016llX", dst_poh->ImageBase + datasect_virtualaddress);
+		PRINT_INFO("ImageAddress:   0x%016llX", pDstOH->ImageBase + datasect_virtualaddress);
 		PRINT_INFO("VirtualAddress: 0x%08X", datasect_virtualaddress);
 		PRINT_INFO("VirtualSize:    0x%08X", datasect_virtualsize);
 		PRINT_INFO("RawAddress:     0x%08X", datasect_rawaddress);
@@ -908,15 +1126,15 @@ int main(int argc, char* argv[], char* envp[])
 
 		memset(datasect_ptr, 0x00 /* NULLs... */, datasect_rawsize);
 
-		std::tuple<void*, unsigned long, unsigned long, unsigned long, unsigned long> codesect = AppendNewSection64(/*nFileSize,*/ pDstMap, ".rxtext", g_nCodeSectionSize, IMAGE_SCN_CNT_CODE | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_READ);
-		void* codesect_ptr = std::get<0>(codesect);
-		unsigned long codesect_virtualaddress = std::get<1>(codesect);
-		unsigned long codesect_virtualsize = std::get<2>(codesect);
-		unsigned long codesect_rawaddress = std::get<3>(codesect);
-		unsigned long codesect_rawsize = std::get<4>(codesect);
+		std::tuple<LPVOID, DWORD, DWORD, DWORD, DWORD> codesect = AppendNewSection64(/*unFileSize,*/ pDstMap, ".rxtext", g_unCodeSectionSize, IMAGE_SCN_CNT_CODE | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_READ);
+		LPVOID codesect_ptr = std::get<0>(codesect);
+		DWORD codesect_virtualaddress = std::get<1>(codesect);
+		DWORD codesect_virtualsize = std::get<2>(codesect);
+		DWORD codesect_rawaddress = std::get<3>(codesect);
+		DWORD codesect_rawsize = std::get<4>(codesect);
 
 		PRINT_POSITIVE("Section `.rxtext` has been added.");
-		PRINT_INFO("ImageAddress:   0x%016llX", dst_poh->ImageBase + codesect_virtualaddress);
+		PRINT_INFO("ImageAddress:   0x%016llX", pDstOH->ImageBase + codesect_virtualaddress);
 		PRINT_INFO("VirtualAddress: 0x%08X", codesect_virtualaddress);
 		PRINT_INFO("VirtualSize:    0x%08X", codesect_virtualsize);
 		PRINT_INFO("RawAddress:     0x%08X", codesect_rawaddress);
@@ -928,12 +1146,14 @@ int main(int argc, char* argv[], char* envp[])
 		unsigned char jmpcode[5];
 		memset(jmpcode, 0, sizeof(jmpcode));
 		jmpcode[0] = 0xE9;
-		*reinterpret_cast<unsigned long*>(jmpcode + 1) = dst_poh->AddressOfEntryPoint - (codesect_virtualaddress + codesect_rawsize - sizeof(jmpcode)) - 5;
+		*reinterpret_cast<DWORD*>(jmpcode + 1) = pDstOH->AddressOfEntryPoint - (codesect_virtualaddress + codesect_rawsize - sizeof(jmpcode)) - 5;
 		memcpy(reinterpret_cast<unsigned char*>(codesect_ptr) + codesect_rawsize - sizeof(jmpcode), jmpcode, sizeof(jmpcode));
 		PRINT_STATUS_OK;
 
+		//unTo = codesect_virtualaddress;
+
 		PRINT_STATUS("Changing EntryPoint...");
-		dst_poh->AddressOfEntryPoint = codesect_virtualaddress;
+		pDstOH->AddressOfEntryPoint = codesect_virtualaddress;
 		PRINT_STATUS_OK;
 
 		if (strnlen_s(szPayloadFile, sizeof(szPayloadFile))) {
@@ -943,7 +1163,7 @@ int main(int argc, char* argv[], char* envp[])
 				bool bIsGood = std::get<0>(data);
 				if (bIsGood) {
 					std::vector<char> fdata = std::get<1>(data);
-					std::vector<unsigned char> asmdata = Assembly64(dst_poh->ImageBase + codesect_virtualaddress, fdata.data());
+					std::vector<unsigned char> asmdata = Assembly64(pDstOH->ImageBase + codesect_virtualaddress, fdata.data());
 					if (fdata.size() > codesect_rawsize - sizeof(jmpcode)) {
 						PRINT_ERROR("The payload is too large. (Use /bcodesize)");
 						return -1;
