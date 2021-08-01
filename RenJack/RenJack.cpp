@@ -633,14 +633,14 @@ int main(int argc, char* argv[], char* envp[])
 	}
 
 	if (argc < 2) {
-		PRINT_WARNING("Usage: %s [/verbose:<level>] [/maxdatasize:<bytes>] [/maxcodesize:<bytes>] [/disabledep] [/disableaslr] [/forceguardcf] [/input:<file>] [/payload:<file>] [/savepayload] [/outputpayload:<file>] [/output:<file>]\n", szMainFile);
+		PRINT_WARNING("Usage: %s [/verbose:<level>] [/maxdatasize:<bytes>] [/maxcodesize:<bytes>] [/disabledep] [/disableaslr] [/forceguardcf] [/noentrypoint] [/input:<file>] [/payload:<file>] [/savepayload] [/outputpayload:<file>] [/output:<file>]\n", szMainFile);
 		return -1;
 	}
 	else {
 		for (int i = 0; i < argc; ++i) {
 			const char* arg = argv[i];
 			if (!strncmp(arg, "/help", 5) || !strncmp(arg, "/?", 2)) {
-				PRINT_WARNING("Usage: %s [/verbose:<level>] [/maxdatasize:<bytes>] [/maxcodesize:<bytes>] [/disabledep] [/disableaslr] [/forceguardcf] [/input:<file>] [/payload:<file>] [/savepayload] [/outputpayload:<file>] [/output:<file>]\n\n    /verbose:<level> - Verbosity level.\n    /maxdatasize - Maximum `.rxdata` size. (Default: 4096)\n    /maxcodesize - Maximum `.rxtext` size. (Default: 4096)\n    /disabledep - Disables DEP.\n    /disableaslr - Disables ASLR.\n    /forceguardcf - Force processing for GuardCF protected executable.\n    /input:<file> - Input PE executable.\n    /payload:<file> - Input binary (.bin) or assembly file (.asm). (Default: null)\n    /savepayload - Save payload to binary file.\n    /outputpayload - Output payload binary. (Default: The name of the output file with `.bin` extension.)\n    /output:<file> - Output PE executable. (Default: The name of the input file with patch prefix.)\n\n", szMainFile);
+				PRINT_WARNING("Usage: %s [/verbose:<level>] [/maxdatasize:<bytes>] [/maxcodesize:<bytes>] [/disabledep] [/disableaslr] [/forceguardcf] [/dischargeentrypoint] [/input:<file>] [/payload:<file>] [/savepayload] [/outputpayload:<file>] [/output:<file>]\n\n    /verbose:<level> - Verbosity level.\n    /maxdatasize - Maximum `.rxdata` size. (Default: 4096)\n    /maxcodesize - Maximum `.rxtext` size. (Default: 4096)\n    /disabledep - Disables DEP.\n    /disableaslr - Disables ASLR.\n    /forceguardcf - Force processing for GuardCF protected executable.\n    /noentrypoint - No entry point.\n    /input:<file> - Input PE executable.\n    /payload:<file> - Input binary (.bin) or assembly file (.asm). (Default: null)\n    /savepayload - Save payload to binary file.\n    /outputpayload - Output payload binary. (Default: The name of the output file with `.bin` extension.)\n    /output:<file> - Output PE executable. (Default: The name of the input file with patch prefix.)\n\n", szMainFile);
 				return 0;
 			}
 		}
@@ -649,6 +649,7 @@ int main(int argc, char* argv[], char* envp[])
 	bool bDisableDEP = false;
 	bool bDisableASLR = false;
 	bool bForceGuardCF = false;
+	bool bNoEntryPoint = false;
 
 	char szInputFile[1024];
 	memset(szInputFile, 0, sizeof(szInputFile));
@@ -687,22 +688,29 @@ int main(int argc, char* argv[], char* envp[])
 		if (!strncmp(szArg, "/disabledep", 11)) {
 			if (g_unVerboseLevel > 0) {
 				PRINT_VERBOSE("DEP is disabled.");
-				bDisableDEP = true;
 			}
+			bDisableDEP = true;
 			continue;
 		}
 		if (!strncmp(szArg, "/disableaslr", 12)) {
 			if (g_unVerboseLevel > 0) {
 				PRINT_VERBOSE("ASLR is disabled.");
-				bDisableASLR = true;
 			}
+			bDisableASLR = true;
 			continue;
 		}
 		if (!strncmp(szArg, "/forceguardcf", 13)) {
 			if (g_unVerboseLevel > 0) {
 				PRINT_VERBOSE("Enabled force processing for GuardCF protected executable.");
-				bForceGuardCF = true;
 			}
+			bForceGuardCF = true;
+			continue;
+		}
+		if (!strncmp(szArg, "/noentrypoint", 13)) {
+			if (g_unVerboseLevel > 0) {
+				PRINT_VERBOSE("No entry point mode.");
+			}
+			bNoEntryPoint = true;
 			continue;
 		}
 		if (!strncmp(szArg, "/input:", 7)) {
@@ -1010,17 +1018,20 @@ int main(int argc, char* argv[], char* envp[])
 
 		memset(codesect_ptr, 0x90 /* NOPs... */, codesect_rawsize);
 
-		PRINT_STATUS("Injecting JMP for the original EntryPoint...");
 		unsigned char jmpcode[5];
 		memset(jmpcode, 0, sizeof(jmpcode));
-		jmpcode[0] = 0xE9;
-		*reinterpret_cast<DWORD*>(jmpcode + 1) = pDstOH->AddressOfEntryPoint - (codesect_virtualaddress + codesect_rawsize - sizeof(jmpcode)) - 5;
-		memcpy(reinterpret_cast<unsigned char*>(codesect_ptr) + codesect_rawsize - sizeof(jmpcode), jmpcode, sizeof(jmpcode));
-		PRINT_STATUS_OK;
 
-		PRINT_STATUS("Changing EntryPoint...");
-		pDstOH->AddressOfEntryPoint = codesect_virtualaddress;
-		PRINT_STATUS_OK;
+		if (!bNoEntryPoint) {
+			PRINT_STATUS("Injecting JMP for the original EntryPoint...");
+			jmpcode[0] = 0xE9;
+			*reinterpret_cast<DWORD*>(jmpcode + 1) = pDstOH->AddressOfEntryPoint - (codesect_virtualaddress + codesect_rawsize - sizeof(jmpcode)) - 5;
+			memcpy(reinterpret_cast<unsigned char*>(codesect_ptr) + codesect_rawsize - sizeof(jmpcode), jmpcode, sizeof(jmpcode));
+			PRINT_STATUS_OK;
+
+			PRINT_STATUS("Changing EntryPoint...");
+			pDstOH->AddressOfEntryPoint = codesect_virtualaddress;
+			PRINT_STATUS_OK;
+		}
 
 		if (strnlen_s(szPayloadFile, sizeof(szPayloadFile))) {
 			if (bPayloadIsAssembly) {
@@ -1030,9 +1041,17 @@ int main(int argc, char* argv[], char* envp[])
 				if (bIsGood) {
 					std::vector<char> fdata = std::get<1>(data);
 					std::vector<unsigned char> asmdata = Assembly32(pDstOH->ImageBase + codesect_virtualaddress, fdata.data());
-					if (fdata.size() > codesect_rawsize - sizeof(jmpcode)) {
-						PRINT_ERROR("The payload is too large. (Use /maxcodesize)");
-						return -1;
+					if (!bNoEntryPoint) {
+						if (fdata.size() > codesect_rawsize - sizeof(jmpcode)) {
+							PRINT_ERROR("The payload is too large. (Use /maxcodesize)");
+							return -1;
+						}
+					}
+					else {
+						if (fdata.size() > codesect_rawsize) {
+							PRINT_ERROR("The payload is too large. (Use /maxcodesize)");
+							return -1;
+						}
 					}
 					memcpy(codesect_ptr, asmdata.data(), asmdata.size());
 					
@@ -1065,9 +1084,17 @@ int main(int argc, char* argv[], char* envp[])
 				bool bIsGood = std::get<0>(data);
 				if (bIsGood) {
 					std::vector<unsigned char> fdata = std::get<1>(data);
-					if (fdata.size() > codesect_rawsize - sizeof(jmpcode)) {
-						PRINT_ERROR("The payload is too large. (Use /maxcodesize)");
-						return -1;
+					if (!bNoEntryPoint) {
+						if (fdata.size() > codesect_rawsize - sizeof(jmpcode)) {
+							PRINT_ERROR("The payload is too large. (Use /maxcodesize)");
+							return -1;
+						}
+					}
+					else {
+						if (fdata.size() > codesect_rawsize) {
+							PRINT_ERROR("The payload is too large. (Use /maxcodesize)");
+							return -1;
+						}
 					}
 					memcpy(codesect_ptr, fdata.data(), fdata.size());
 					PRINT_POSITIVE("Injected %lu bytes.", fdata.size());
@@ -1170,17 +1197,20 @@ int main(int argc, char* argv[], char* envp[])
 
 		memset(codesect_ptr, 0x90 /* NOPs... */, codesect_rawsize);
 
-		PRINT_STATUS("Injecting JMP for the original EntryPoint...");
 		unsigned char jmpcode[5];
 		memset(jmpcode, 0, sizeof(jmpcode));
-		jmpcode[0] = 0xE9;
-		*reinterpret_cast<DWORD*>(jmpcode + 1) = pDstOH->AddressOfEntryPoint - (codesect_virtualaddress + codesect_rawsize - sizeof(jmpcode)) - 5;
-		memcpy(reinterpret_cast<unsigned char*>(codesect_ptr) + codesect_rawsize - sizeof(jmpcode), jmpcode, sizeof(jmpcode));
-		PRINT_STATUS_OK;
 
-		PRINT_STATUS("Changing EntryPoint...");
-		pDstOH->AddressOfEntryPoint = codesect_virtualaddress;
-		PRINT_STATUS_OK;
+		if (!bNoEntryPoint) {
+			PRINT_STATUS("Injecting JMP for the original EntryPoint...");
+			jmpcode[0] = 0xE9;
+			*reinterpret_cast<DWORD*>(jmpcode + 1) = pDstOH->AddressOfEntryPoint - (codesect_virtualaddress + codesect_rawsize - sizeof(jmpcode)) - 5;
+			memcpy(reinterpret_cast<unsigned char*>(codesect_ptr) + codesect_rawsize - sizeof(jmpcode), jmpcode, sizeof(jmpcode));
+			PRINT_STATUS_OK;
+
+			PRINT_STATUS("Changing EntryPoint...");
+			pDstOH->AddressOfEntryPoint = codesect_virtualaddress;
+			PRINT_STATUS_OK;
+		}
 
 		if (strnlen_s(szPayloadFile, sizeof(szPayloadFile))) {
 			if (bPayloadIsAssembly) {
@@ -1190,9 +1220,17 @@ int main(int argc, char* argv[], char* envp[])
 				if (bIsGood) {
 					std::vector<char> fdata = std::get<1>(data);
 					std::vector<unsigned char> asmdata = Assembly64(pDstOH->ImageBase + codesect_virtualaddress, fdata.data());
-					if (fdata.size() > codesect_rawsize - sizeof(jmpcode)) {
-						PRINT_ERROR("The payload is too large. (Use /bcodesize)");
-						return -1;
+					if (!bNoEntryPoint) {
+						if (fdata.size() > codesect_rawsize - sizeof(jmpcode)) {
+							PRINT_ERROR("The payload is too large. (Use /maxcodesize)");
+							return -1;
+						}
+					}
+					else {
+						if (fdata.size() > codesect_rawsize) {
+							PRINT_ERROR("The payload is too large. (Use /maxcodesize)");
+							return -1;
+						}
 					}
 					memcpy(codesect_ptr, asmdata.data(), asmdata.size());
 					PRINT_INFO("Assembled and injected %lu bytes.", asmdata.size());
@@ -1226,9 +1264,17 @@ int main(int argc, char* argv[], char* envp[])
 				bool bIsGood = std::get<0>(data);
 				if (bIsGood) {
 					std::vector<unsigned char> fdata = std::get<1>(data);
-					if (fdata.size() > codesect_rawsize - sizeof(jmpcode)) {
-						PRINT_ERROR("The payload is too large. (Use /bcodesize)");
-						return -1;
+					if (!bNoEntryPoint) {
+						if (fdata.size() > codesect_rawsize - sizeof(jmpcode)) {
+							PRINT_ERROR("The payload is too large. (Use /maxcodesize)");
+							return -1;
+						}
+					}
+					else {
+						if (fdata.size() > codesect_rawsize) {
+							PRINT_ERROR("The payload is too large. (Use /maxcodesize)");
+							return -1;
+						}
 					}
 					memcpy(codesect_ptr, fdata.data(), fdata.size());
 					PRINT_INFO("Injected %lu bytes.", fdata.size());
