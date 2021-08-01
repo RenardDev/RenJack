@@ -11,6 +11,7 @@
 // STL
 #include <tuple>
 #include <vector>
+#include <algorithm>
 #include <memory>
 #include <string>
 
@@ -220,7 +221,7 @@ std::tuple<LPVOID, DWORD, DWORD, DWORD, DWORD> AppendNewSection64(LPVOID pMap, L
 }
 
 /*
-std::vector<std::tuple<DWORD, WORD, std::string>> GetEAT32(LPVOID pMap) {
+std::vector<std::tuple<ULONGLONG, WORD, std::string>> GetEAT32(LPVOID pMap) {
 	PIMAGE_DOS_HEADER pDH = reinterpret_cast<PIMAGE_DOS_HEADER>(pMap);
 	PIMAGE_NT_HEADERS32 pNTHs = reinterpret_cast<PIMAGE_NT_HEADERS32>(reinterpret_cast<char*>(pMap) + pDH->e_lfanew);
 	PIMAGE_FILE_HEADER pFH = &(pNTHs->FileHeader);
@@ -230,7 +231,7 @@ std::vector<std::tuple<DWORD, WORD, std::string>> GetEAT32(LPVOID pMap) {
 
 	PIMAGE_SECTION_HEADER pFirstSection = reinterpret_cast<PIMAGE_SECTION_HEADER>(reinterpret_cast<char*>(pFH) + sizeof(IMAGE_FILE_HEADER) + pFH->SizeOfOptionalHeader);
 
-	std::vector<std::tuple<DWORD, WORD, std::string>> vecData;
+	std::vector<std::tuple<ULONGLONG, WORD, std::string>> vecData;
 
 	for (DWORD i = 0; i < pFH->NumberOfSections; ++i, ++pFirstSection) {
 		if ((ExportDD.VirtualAddress >= pFirstSection->VirtualAddress) && (ExportDD.VirtualAddress < (pFirstSection->VirtualAddress + pFirstSection->Misc.VirtualSize))) {
@@ -243,16 +244,16 @@ std::vector<std::tuple<DWORD, WORD, std::string>> GetEAT32(LPVOID pMap) {
 			PWORD pOrdinals = reinterpret_cast<PWORD>(reinterpret_cast<char*>(pMap) + pExportDirectory->AddressOfNameOrdinals - unDelta);
 			PCHAR* pNames = reinterpret_cast<PCHAR*>(reinterpret_cast<char*>(pMap) + pExportDirectory->AddressOfNames - unDelta);
 
-			for (DWORD i = 0; i < pExportDirectory->NumberOfFunctions; ++i) {
-				DWORD unFunction = pFunctions[i];
+			for (DWORD j = 0; j < pExportDirectory->NumberOfFunctions; ++j) {
+				DWORD unFunction = pFunctions[j];
 				if (unFunction == 0) {
 					continue;
 				}
-				for (DWORD j = 0; j < pExportDirectory->NumberOfNames; ++j) {
-					if (pOrdinals[j] == i) {
+				for (DWORD l = 0; l < pExportDirectory->NumberOfNames; ++l) {
+					if (pOrdinals[l] == j) {
 						//PRINT_INFO("Export: 0x%08X   `%s`", unFunction, );
 						//std::tuple<DWORD, WORD, std::unique_ptr<char>>()
-						vecData.push_back(std::tuple<DWORD, WORD, std::string>(unFunction, pOrdinals[j], std::string(reinterpret_cast<char*>(pMap) + reinterpret_cast<DWORD>(pNames[j]) - unDelta)));
+						vecData.push_back(std::tuple<ULONGLONG, WORD, std::string>(pOH->ImageBase + unFunction, pOrdinals[l], std::string(reinterpret_cast<char*>(pMap) + reinterpret_cast<DWORD>(pNames[l]) - unDelta)));
 					}
 				}
 			}
@@ -262,40 +263,155 @@ std::vector<std::tuple<DWORD, WORD, std::string>> GetEAT32(LPVOID pMap) {
 	return vecData;
 }
 
-std::vector<std::tuple<std::string, DWORD, WORD, std::string>> GetIAT32(LPVOID pMap) {
+std::vector<std::tuple<std::string, ULONGLONG, WORD, std::string>> GetIAT32(LPVOID pMap) {
 	PIMAGE_DOS_HEADER pDH = reinterpret_cast<PIMAGE_DOS_HEADER>(pMap);
 	PIMAGE_NT_HEADERS32 pNTHs = reinterpret_cast<PIMAGE_NT_HEADERS32>(reinterpret_cast<char*>(pMap) + pDH->e_lfanew);
 	PIMAGE_FILE_HEADER pFH = &(pNTHs->FileHeader);
 	PIMAGE_OPTIONAL_HEADER32 pOH = &(pNTHs->OptionalHeader);
 
 	IMAGE_DATA_DIRECTORY ImportDD = pOH->DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+	IMAGE_DATA_DIRECTORY ImportAddressTableDD = pOH->DataDirectory[IMAGE_DIRECTORY_ENTRY_IAT];
 
 	PIMAGE_SECTION_HEADER pFirstSection = reinterpret_cast<PIMAGE_SECTION_HEADER>(reinterpret_cast<char*>(pFH) + sizeof(IMAGE_FILE_HEADER) + pFH->SizeOfOptionalHeader);
 
-	std::vector<std::tuple<std::string, DWORD, WORD, std::string>> vecData;
+	std::vector<std::tuple<std::string, ULONGLONG, WORD, std::string>> vecData;
 
 	for (DWORD i = 0; i < pFH->NumberOfSections; ++i, ++pFirstSection) {
 		if ((ImportDD.VirtualAddress >= pFirstSection->VirtualAddress) && (ImportDD.VirtualAddress < (pFirstSection->VirtualAddress + pFirstSection->Misc.VirtualSize))) {
 			char* pRawOffset = reinterpret_cast<char*>(pMap) + pFirstSection->PointerToRawData;
+
+			PIMAGE_IMPORT_DESCRIPTOR pImportDesc = reinterpret_cast<PIMAGE_IMPORT_DESCRIPTOR>(pRawOffset + (ImportDD.VirtualAddress - pFirstSection->VirtualAddress));
+
+			std::vector<PIMAGE_IMPORT_DESCRIPTOR> vecImportDescs;
+
+			for (; pImportDesc->Name != 0; ++pImportDesc) {
+				vecImportDescs.push_back(pImportDesc);
+			}
+
+			std::sort(vecImportDescs.begin(), vecImportDescs.end(), [](PIMAGE_IMPORT_DESCRIPTOR pA, PIMAGE_IMPORT_DESCRIPTOR pB) {
+				DWORD unThunkA = pA->OriginalFirstThunk == 0 ? pA->FirstThunk : pA->OriginalFirstThunk;
+				DWORD unThunkB = pB->OriginalFirstThunk == 0 ? pB->FirstThunk : pB->OriginalFirstThunk;
+				return unThunkA < unThunkB;
+				});
+
+			std::vector<PIMAGE_IMPORT_DESCRIPTOR>::iterator it = vecImportDescs.begin();
+			for (ULONGLONG j = 0; it != vecImportDescs.end(); ++it) {
+
+				//PRINT_INFO("> Module: %s", reinterpret_cast<char*>(pRawOffset + (pImportDesc->Name - pFirstSection->VirtualAddress)));
+
+				DWORD unThunk = (*it)->OriginalFirstThunk == 0 ? (*it)->FirstThunk : (*it)->OriginalFirstThunk;
+				PIMAGE_THUNK_DATA32 pThunkData = reinterpret_cast<PIMAGE_THUNK_DATA32>(pRawOffset + (unThunk - pFirstSection->VirtualAddress));
+
+				for (; pThunkData->u1.AddressOfData != 0; ++j, ++pThunkData) {
+					if (pThunkData->u1.Ordinal & IMAGE_ORDINAL_FLAG) {
+						//PRINT_INFO(" -> 0x%08X   `0x%04X` (Ordinal)", pRawOffset + (pThunkData->u1.Function - pFirstSection->VirtualAddress), pThunkData->u1.Ordinal & 0xFFFF);
+						vecData.push_back(std::tuple<std::string, ULONGLONG, WORD, std::string>(std::string(reinterpret_cast<char*>(pRawOffset + ((*it)->Name - pFirstSection->VirtualAddress))), pOH->ImageBase + ImportAddressTableDD.VirtualAddress + j * 8, pThunkData->u1.Ordinal & 0xFFFF, std::string(nullptr)));
+					}
+					else {
+						PIMAGE_IMPORT_BY_NAME pImportByName = reinterpret_cast<PIMAGE_IMPORT_BY_NAME>(pRawOffset + (pThunkData->u1.AddressOfData - pFirstSection->VirtualAddress));
+						//PRINT_INFO(" -> 0x%08X   `%s`", pOH->ImageBase + ImportAddressTableDD.VirtualAddress + j * 8, pImportByName->Name);
+						vecData.push_back(std::tuple<std::string, ULONGLONG, WORD, std::string>(std::string(reinterpret_cast<char*>(pRawOffset + ((*it)->Name - pFirstSection->VirtualAddress))), pOH->ImageBase + ImportAddressTableDD.VirtualAddress + j * 8, pThunkData->u1.Ordinal & 0xFFFF, std::string(pImportByName->Name)));
+					}
+				}
+
+			}
+		}
+	}
+
+	return vecData;
+}
+
+std::vector<std::tuple<ULONGLONG, WORD, std::string>> GetEAT64(LPVOID pMap) {
+	PIMAGE_DOS_HEADER pDH = reinterpret_cast<PIMAGE_DOS_HEADER>(pMap);
+	PIMAGE_NT_HEADERS64 pNTHs = reinterpret_cast<PIMAGE_NT_HEADERS64>(reinterpret_cast<char*>(pMap) + pDH->e_lfanew);
+	PIMAGE_FILE_HEADER pFH = &(pNTHs->FileHeader);
+	PIMAGE_OPTIONAL_HEADER64 pOH = &(pNTHs->OptionalHeader);
+
+	IMAGE_DATA_DIRECTORY ExportDD = pOH->DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
+
+	PIMAGE_SECTION_HEADER pFirstSection = reinterpret_cast<PIMAGE_SECTION_HEADER>(reinterpret_cast<char*>(pFH) + sizeof(IMAGE_FILE_HEADER) + pFH->SizeOfOptionalHeader);
+
+	std::vector<std::tuple<ULONGLONG, WORD, std::string>> vecData;
+
+	for (DWORD i = 0; i < pFH->NumberOfSections; ++i, ++pFirstSection) {
+		if ((ExportDD.VirtualAddress >= pFirstSection->VirtualAddress) && (ExportDD.VirtualAddress < (pFirstSection->VirtualAddress + pFirstSection->Misc.VirtualSize))) {
+
+			DWORD unDelta = pFirstSection->VirtualAddress - pFirstSection->PointerToRawData;
+
+			PIMAGE_EXPORT_DIRECTORY pExportDirectory = reinterpret_cast<PIMAGE_EXPORT_DIRECTORY>(reinterpret_cast<char*>(pMap) + ExportDD.VirtualAddress - unDelta);
+
+			PDWORD pFunctions = reinterpret_cast<PDWORD>(reinterpret_cast<char*>(pMap) + pExportDirectory->AddressOfFunctions - unDelta);
+			PWORD pOrdinals = reinterpret_cast<PWORD>(reinterpret_cast<char*>(pMap) + pExportDirectory->AddressOfNameOrdinals - unDelta);
+			PCHAR* pNames = reinterpret_cast<PCHAR*>(reinterpret_cast<char*>(pMap) + pExportDirectory->AddressOfNames - unDelta);
+
+			for (DWORD j = 0; j < pExportDirectory->NumberOfFunctions; ++j) {
+				DWORD unFunction = pFunctions[j];
+				if (unFunction == 0) {
+					continue;
+				}
+				for (DWORD l = 0; l < pExportDirectory->NumberOfNames; ++l) {
+					if (pOrdinals[l] == j) {
+						//PRINT_INFO("Export: 0x%08X   `%s`", unFunction, );
+						//std::tuple<DWORD, WORD, std::unique_ptr<char>>()
+						vecData.push_back(std::tuple<ULONGLONG, WORD, std::string>(pOH->ImageBase + unFunction, pOrdinals[l], std::string(reinterpret_cast<char*>(pMap) + reinterpret_cast<DWORD>(pNames[l]) - unDelta)));
+					}
+				}
+			}
+		}
+	}
+
+	return vecData;
+}
+
+std::vector<std::tuple<std::string, ULONGLONG, WORD, std::string>> GetIAT64(LPVOID pMap) {
+	PIMAGE_DOS_HEADER pDH = reinterpret_cast<PIMAGE_DOS_HEADER>(pMap);
+	PIMAGE_NT_HEADERS64 pNTHs = reinterpret_cast<PIMAGE_NT_HEADERS64>(reinterpret_cast<char*>(pMap) + pDH->e_lfanew);
+	PIMAGE_FILE_HEADER pFH = &(pNTHs->FileHeader);
+	PIMAGE_OPTIONAL_HEADER64 pOH = &(pNTHs->OptionalHeader);
+
+	IMAGE_DATA_DIRECTORY ImportDD = pOH->DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+	IMAGE_DATA_DIRECTORY ImportAddressTableDD = pOH->DataDirectory[IMAGE_DIRECTORY_ENTRY_IAT];
+
+	PIMAGE_SECTION_HEADER pFirstSection = reinterpret_cast<PIMAGE_SECTION_HEADER>(reinterpret_cast<char*>(pFH) + sizeof(IMAGE_FILE_HEADER) + pFH->SizeOfOptionalHeader);
+
+	std::vector<std::tuple<std::string, ULONGLONG, WORD, std::string>> vecData;
+
+	for (DWORD i = 0; i < pFH->NumberOfSections; ++i, ++pFirstSection) {
+		if ((ImportDD.VirtualAddress >= pFirstSection->VirtualAddress) && (ImportDD.VirtualAddress < (pFirstSection->VirtualAddress + pFirstSection->Misc.VirtualSize))) {
+			char* pRawOffset = reinterpret_cast<char*>(pMap) + pFirstSection->PointerToRawData;
+
+			PIMAGE_IMPORT_DESCRIPTOR pImportDesc = reinterpret_cast<PIMAGE_IMPORT_DESCRIPTOR>(pRawOffset + (ImportDD.VirtualAddress - pFirstSection->VirtualAddress));
 			
-			PIMAGE_IMPORT_DESCRIPTOR pImportDesc = reinterpret_cast<PIMAGE_IMPORT_DESCRIPTOR>(pRawOffset + (ImportDD.VirtualAddress - pFirstSection->VirtualAddress));
-
+			std::vector<PIMAGE_IMPORT_DESCRIPTOR> vecImportDescs;
+			
 			for (; pImportDesc->Name != 0; ++pImportDesc) {
+				vecImportDescs.push_back(pImportDesc);
+			}
+
+			std::sort(vecImportDescs.begin(), vecImportDescs.end(), [](PIMAGE_IMPORT_DESCRIPTOR pA, PIMAGE_IMPORT_DESCRIPTOR pB) {
+				DWORD unThunkA = pA->OriginalFirstThunk == 0 ? pA->FirstThunk : pA->OriginalFirstThunk;
+				DWORD unThunkB = pB->OriginalFirstThunk == 0 ? pB->FirstThunk : pB->OriginalFirstThunk;
+				return unThunkA < unThunkB;
+			});
+
+			std::vector<PIMAGE_IMPORT_DESCRIPTOR>::iterator it = vecImportDescs.begin();
+			ULONGLONG i = 0;
+			for (ULONGLONG j = 0; it != vecImportDescs.end(); ++it, i += 8) {
 
 				//PRINT_INFO("> Module: %s", reinterpret_cast<char*>(pRawOffset + (pImportDesc->Name - pFirstSection->VirtualAddress)));
 
-				DWORD unThunk = pImportDesc->OriginalFirstThunk == 0 ? pImportDesc->FirstThunk : pImportDesc->OriginalFirstThunk;
-				PIMAGE_THUNK_DATA32 pThunkData = reinterpret_cast<PIMAGE_THUNK_DATA32>(pRawOffset + (unThunk - pFirstSection->VirtualAddress));
+				DWORD unThunk = (*it)->OriginalFirstThunk == 0 ? (*it)->FirstThunk : (*it)->OriginalFirstThunk;
+				PIMAGE_THUNK_DATA64 pThunkData = reinterpret_cast<PIMAGE_THUNK_DATA64>(pRawOffset + (unThunk - pFirstSection->VirtualAddress));
 
-				for (DWORD i = 0; pThunkData->u1.AddressOfData != 0; ++i, ++pThunkData) {
+				for (; pThunkData->u1.AddressOfData != 0; ++j, ++pThunkData) {
 					if (pThunkData->u1.Ordinal & IMAGE_ORDINAL_FLAG) {
 						//PRINT_INFO(" -> 0x%08X   `0x%04X` (Ordinal)", pRawOffset + (pThunkData->u1.Function - pFirstSection->VirtualAddress), pThunkData->u1.Ordinal & 0xFFFF);
-						vecData.push_back(std::tuple<std::string, DWORD, WORD, std::string>(std::string(reinterpret_cast<char*>(pRawOffset + (pImportDesc->Name - pFirstSection->VirtualAddress))), pFirstSection->VirtualAddress + 4 * i, pThunkData->u1.Ordinal & 0xFFFF, std::string(nullptr)));
+						vecData.push_back(std::tuple<std::string, ULONGLONG, WORD, std::string>(std::string(reinterpret_cast<char*>(pRawOffset + ((*it)->Name - pFirstSection->VirtualAddress))), pOH->ImageBase + ImportAddressTableDD.VirtualAddress + j * 8 + i, pThunkData->u1.Ordinal & 0xFFFF, std::string(nullptr)));
 					}
 					else {
 						PIMAGE_IMPORT_BY_NAME pImportByName = reinterpret_cast<PIMAGE_IMPORT_BY_NAME>(pRawOffset + (pThunkData->u1.AddressOfData - pFirstSection->VirtualAddress));
-						//PRINT_INFO(" -> 0x%08X   `%s`", pFirstSection->VirtualAddress + 4 * i, pImportByName->Name);
-						vecData.push_back(std::tuple<std::string, DWORD, WORD, std::string>(std::string(reinterpret_cast<char*>(pRawOffset + (pImportDesc->Name - pFirstSection->VirtualAddress))), pFirstSection->VirtualAddress + 4 * i, pThunkData->u1.Ordinal & 0xFFFF, std::string(pImportByName->Name)));
+						//PRINT_INFO(" -> 0x%016llX   `%s`", pOH->ImageBase + ImportAddressTableDD.VirtualAddress + j * 8 + i, pImportByName->Name);
+						vecData.push_back(std::tuple<std::string, ULONGLONG, WORD, std::string>(std::string(reinterpret_cast<char*>(pRawOffset + ((*it)->Name - pFirstSection->VirtualAddress))), pOH->ImageBase + ImportAddressTableDD.VirtualAddress + j * 8 + i, pThunkData->u1.Ordinal & 0xFFFF, std::string(pImportByName->Name)));
 					}
 				}
 
@@ -306,94 +422,8 @@ std::vector<std::tuple<std::string, DWORD, WORD, std::string>> GetIAT32(LPVOID p
 	return vecData;
 }
 
-std::vector<std::tuple<DWORD, WORD, std::string>> GetEAT64(LPVOID pMap) {
-	PIMAGE_DOS_HEADER pDH = reinterpret_cast<PIMAGE_DOS_HEADER>(pMap);
-	PIMAGE_NT_HEADERS64 pNTHs = reinterpret_cast<PIMAGE_NT_HEADERS64>(reinterpret_cast<char*>(pMap) + pDH->e_lfanew);
-	PIMAGE_FILE_HEADER pFH = &(pNTHs->FileHeader);
-	PIMAGE_OPTIONAL_HEADER64 pOH = &(pNTHs->OptionalHeader);
-
-	IMAGE_DATA_DIRECTORY ExportDD = pOH->DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
-
-	PIMAGE_SECTION_HEADER pFirstSection = reinterpret_cast<PIMAGE_SECTION_HEADER>(reinterpret_cast<char*>(pFH) + sizeof(IMAGE_FILE_HEADER) + pFH->SizeOfOptionalHeader);
-
-	std::vector<std::tuple<DWORD, WORD, std::string>> vecData;
-
-	for (DWORD i = 0; i < pFH->NumberOfSections; ++i, ++pFirstSection) {
-		if ((ExportDD.VirtualAddress >= pFirstSection->VirtualAddress) && (ExportDD.VirtualAddress < (pFirstSection->VirtualAddress + pFirstSection->Misc.VirtualSize))) {
-
-			DWORD unDelta = pFirstSection->VirtualAddress - pFirstSection->PointerToRawData;
-
-			PIMAGE_EXPORT_DIRECTORY pExportDirectory = reinterpret_cast<PIMAGE_EXPORT_DIRECTORY>(reinterpret_cast<char*>(pMap) + ExportDD.VirtualAddress - unDelta);
-
-			PDWORD pFunctions = reinterpret_cast<PDWORD>(reinterpret_cast<char*>(pMap) + pExportDirectory->AddressOfFunctions - unDelta);
-			PWORD pOrdinals = reinterpret_cast<PWORD>(reinterpret_cast<char*>(pMap) + pExportDirectory->AddressOfNameOrdinals - unDelta);
-			PCHAR* pNames = reinterpret_cast<PCHAR*>(reinterpret_cast<char*>(pMap) + pExportDirectory->AddressOfNames - unDelta);
-
-			for (DWORD i = 0; i < pExportDirectory->NumberOfFunctions; ++i) {
-				DWORD unFunction = pFunctions[i];
-				if (unFunction == 0) {
-					continue;
-				}
-				for (DWORD j = 0; j < pExportDirectory->NumberOfNames; ++j) {
-					if (pOrdinals[j] == i) {
-						//PRINT_INFO("Export: 0x%08X   `%s`", unFunction, );
-						//std::tuple<DWORD, WORD, std::unique_ptr<char>>()
-						vecData.push_back(std::tuple<DWORD, WORD, std::string>(unFunction, pOrdinals[j], std::string(reinterpret_cast<char*>(pMap) + reinterpret_cast<DWORD>(pNames[j]) - unDelta)));
-					}
-				}
-			}
-		}
-	}
-
-	return vecData;
-}
-
-std::vector<std::tuple<std::string, DWORD, WORD, std::string>> GetIAT64(LPVOID pMap) {
-	PIMAGE_DOS_HEADER pDH = reinterpret_cast<PIMAGE_DOS_HEADER>(pMap);
-	PIMAGE_NT_HEADERS64 pNTHs = reinterpret_cast<PIMAGE_NT_HEADERS64>(reinterpret_cast<char*>(pMap) + pDH->e_lfanew);
-	PIMAGE_FILE_HEADER pFH = &(pNTHs->FileHeader);
-	PIMAGE_OPTIONAL_HEADER64 pOH = &(pNTHs->OptionalHeader);
-
-	IMAGE_DATA_DIRECTORY ImportDD = pOH->DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
-
-	PIMAGE_SECTION_HEADER pFirstSection = reinterpret_cast<PIMAGE_SECTION_HEADER>(reinterpret_cast<char*>(pFH) + sizeof(IMAGE_FILE_HEADER) + pFH->SizeOfOptionalHeader);
-
-	std::vector<std::tuple<std::string, DWORD, WORD, std::string>> vecData;
-
-	for (DWORD i = 0; i < pFH->NumberOfSections; ++i, ++pFirstSection) {
-		if ((ImportDD.VirtualAddress >= pFirstSection->VirtualAddress) && (ImportDD.VirtualAddress < (pFirstSection->VirtualAddress + pFirstSection->Misc.VirtualSize))) {
-			char* pRawOffset = reinterpret_cast<char*>(pMap) + pFirstSection->PointerToRawData;
-
-			PIMAGE_IMPORT_DESCRIPTOR pImportDesc = reinterpret_cast<PIMAGE_IMPORT_DESCRIPTOR>(pRawOffset + (ImportDD.VirtualAddress - pFirstSection->VirtualAddress));
-
-			for (; pImportDesc->Name != 0; ++pImportDesc) {
-
-				//PRINT_INFO("> Module: %s", reinterpret_cast<char*>(pRawOffset + (pImportDesc->Name - pFirstSection->VirtualAddress)));
-
-				DWORD unThunk = pImportDesc->OriginalFirstThunk == 0 ? pImportDesc->FirstThunk : pImportDesc->OriginalFirstThunk;
-				PIMAGE_THUNK_DATA32 pThunkData = reinterpret_cast<PIMAGE_THUNK_DATA32>(pRawOffset + (unThunk - pFirstSection->VirtualAddress));
-
-				for (DWORD i = 0; pThunkData->u1.AddressOfData != 0; ++i, ++pThunkData) {
-					if (pThunkData->u1.Ordinal & IMAGE_ORDINAL_FLAG) {
-						//PRINT_INFO(" -> 0x%08X   `0x%04X` (Ordinal)", pRawOffset + (pThunkData->u1.Function - pFirstSection->VirtualAddress), pThunkData->u1.Ordinal & 0xFFFF);
-						vecData.push_back(std::tuple<std::string, DWORD, WORD, std::string>(std::string(reinterpret_cast<char*>(pRawOffset + (pImportDesc->Name - pFirstSection->VirtualAddress))), pFirstSection->VirtualAddress + 4 * i, pThunkData->u1.Ordinal & 0xFFFF, std::string(nullptr)));
-					}
-					else {
-						PIMAGE_IMPORT_BY_NAME pImportByName = reinterpret_cast<PIMAGE_IMPORT_BY_NAME>(pRawOffset + (pThunkData->u1.AddressOfData - pFirstSection->VirtualAddress));
-						//PRINT_INFO(" -> 0x%08X   `%s`", pFirstSection->VirtualAddress + 4 * i, pImportByName->Name);
-						vecData.push_back(std::tuple<std::string, DWORD, WORD, std::string>(std::string(reinterpret_cast<char*>(pRawOffset + (pImportDesc->Name - pFirstSection->VirtualAddress))), pFirstSection->VirtualAddress + 4 * i, pThunkData->u1.Ordinal & 0xFFFF, std::string(pImportByName->Name)));
-					}
-				}
-
-			}
-		}
-	}
-
-	return vecData;
-}
-
-std::vector<std::tuple<DWORD, WORD, std::string>> vecExports;
-std::vector<std::tuple<std::string, DWORD, WORD, std::string>> vecImports;
+std::vector<std::tuple<ULONGLONG, WORD, std::string>> vecExports;
+std::vector<std::tuple<std::string, ULONGLONG, WORD, std::string>> vecImports;
 
 static bool assembly_symbol_resolver(const char* szSymbol, uint64_t* value) {
 	if (!strncmp(szSymbol, "export_", 7)) {
@@ -404,14 +434,14 @@ static bool assembly_symbol_resolver(const char* szSymbol, uint64_t* value) {
 
 			PRINT_STATUS("Finding Export...");
 
-			for (std::vector<std::tuple<DWORD, WORD, std::string>>::iterator it = vecExports.begin(); it != vecExports.end(); ++it) {
+			for (std::vector<std::tuple<ULONGLONG, WORD, std::string>>::iterator it = vecExports.begin(); it != vecExports.end(); ++it) {
 				
-				DWORD unFunction = std::get<0>(*it);
+				ULONGLONG unFunction = std::get<0>(*it);
 				std::string strName = std::get<2>(*it);
 
 				if (strName == szExport) {
 					PRINT_STATUS_OK;
-					*value = unTo - unFunction + *value - 5;
+					*value = unFunction;
 					return true;
 				}
 			}
@@ -428,14 +458,14 @@ static bool assembly_symbol_resolver(const char* szSymbol, uint64_t* value) {
 
 			PRINT_STATUS("Finding Import...");
 
-			for (std::vector<std::tuple<std::string, DWORD, WORD, std::string>>::iterator it = vecImports.begin(); it != vecImports.end(); ++it) {
+			for (std::vector<std::tuple<std::string, ULONGLONG, WORD, std::string>>::iterator it = vecImports.begin(); it != vecImports.end(); ++it) {
 
-				DWORD unFunction = std::get<1>(*it);
+				ULONGLONG unFunction = std::get<1>(*it);
 				std::string strName = std::get<3>(*it);
 
 				if (strName == szImport) {
 					PRINT_STATUS_OK;
-					*value = unTo - unFunction + *value - 5;
+					*value = unFunction;
 					return true;
 				}
 			}
@@ -558,7 +588,7 @@ std::vector<unsigned char> Assembly32(DWORD nBaseAddress, PCHAR szAsm) {
 	return data;
 }
 
-std::vector<unsigned char> Assembly64(DWORD nBaseAddress, PCHAR szAsm) {
+std::vector<unsigned char> Assembly64(ULONGLONG nBaseAddress, PCHAR szAsm) {
 	std::vector<unsigned char> data;
 	ks_engine* ks = nullptr;
 	if (ks_open(KS_ARCH_X86, KS_MODE_64, &ks) == KS_ERR_OK) {
@@ -569,7 +599,7 @@ std::vector<unsigned char> Assembly64(DWORD nBaseAddress, PCHAR szAsm) {
 		size_t start_count = 0;
 
 		if (ks_asm(ks, szAsm, nBaseAddress, &encoding, &encoding_size, &start_count) != KS_ERR_OK) {
-			PRINT_ERROR("Unable to build assembly.");
+			PRINT_ERROR("Unable to build assembly. (err = %d)", ks_errno(ks));
 			return data;
 		}
 
@@ -988,8 +1018,6 @@ int main(int argc, char* argv[], char* envp[])
 		memcpy(reinterpret_cast<unsigned char*>(codesect_ptr) + codesect_rawsize - sizeof(jmpcode), jmpcode, sizeof(jmpcode));
 		PRINT_STATUS_OK;
 
-		//unTo = codesect_virtualaddress;
-
 		PRINT_STATUS("Changing EntryPoint...");
 		pDstOH->AddressOfEntryPoint = codesect_virtualaddress;
 		PRINT_STATUS_OK;
@@ -1149,8 +1177,6 @@ int main(int argc, char* argv[], char* envp[])
 		*reinterpret_cast<DWORD*>(jmpcode + 1) = pDstOH->AddressOfEntryPoint - (codesect_virtualaddress + codesect_rawsize - sizeof(jmpcode)) - 5;
 		memcpy(reinterpret_cast<unsigned char*>(codesect_ptr) + codesect_rawsize - sizeof(jmpcode), jmpcode, sizeof(jmpcode));
 		PRINT_STATUS_OK;
-
-		//unTo = codesect_virtualaddress;
 
 		PRINT_STATUS("Changing EntryPoint...");
 		pDstOH->AddressOfEntryPoint = codesect_virtualaddress;
