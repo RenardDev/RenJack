@@ -9,15 +9,15 @@ Renard Injector (PE section injection)
 # Usage
 ```
 > RenJack
-RenJack by Ren (zeze839@gmail.com) [Version 1.0.0.0]
+RenJack by Ren (zeze839@gmail.com) [Version 1.0.0.1]
 
-[!] Warning: Usage: RenJack [/verbose:<level>] [/bdatasize:<bytes>] [/bcodesize:<bytes>] [/input:<file>] [/payload:<file>] [/savepayload] [/outputpayload:<file>] [/output:<file>]
+[!] Warning: Usage: RenJack [/verbose:<level>] [/maxdatasize:<bytes>] [/maxcodesize:<bytes>] [/disabledep] [/disableaslr] [/forceguardcf] [/noentrypoint] [/input:<file>] [/payload:<file>] [/savepayload] [/outputpayload:<file>] [/output:<file>]
 ```
 ```
 > RenJack /?
-RenJack by Ren (zeze839@gmail.com) [Version 1.0.0.0]
+RenJack by Ren (zeze839@gmail.com) [Version 1.0.0.1]
 
-[!] Warning: Usage: RenJack.exe [/verbose:<level>] [/maxdatasize:<bytes>] [/maxcodesize:<bytes>] [/disabledep] [/disableaslr] [/forceguardcf] [/input:<file>] [/payload:<file>] [/savepayload] [/outputpayload:<file>] [/output:<file>]
+[!] Warning: Usage: RenJack [/verbose:<level>] [/maxdatasize:<bytes>] [/maxcodesize:<bytes>] [/disabledep] [/disableaslr] [/forceguardcf] [/noentrypoint] [/input:<file>] [/payload:<file>] [/savepayload] [/outputpayload:<file>] [/output:<file>]
 
     /verbose:<level> - Verbosity level.
     /maxdatasize - Maximum `.rxdata` size. (Default: 4096)
@@ -25,6 +25,7 @@ RenJack by Ren (zeze839@gmail.com) [Version 1.0.0.0]
     /disabledep - Disables DEP.
     /disableaslr - Disables ASLR.
     /forceguardcf - Force processing for GuardCF protected executable.
+    /noentrypoint - No entry point.
     /input:<file> - Input PE executable.
     /payload:<file> - Input binary (.bin) or assembly file (.asm). (Default: null)
     /savepayload - Save payload to binary file.
