@@ -2,7 +2,6 @@
 // Default
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
-#include <sddl.h>
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -166,7 +165,7 @@ static inline DWORD P2ALIGNUP(DWORD unSize, DWORD unAlignment) {
 };
 #endif
 
-std::tuple<LPVOID, DWORD, DWORD, DWORD, DWORD> AppendNewSection32(LPVOID pMap, LPCSTR szName, DWORD unVirtualSize, DWORD unCharacteristics) {
+std::tuple<LPVOID, DWORD, DWORD, DWORD, DWORD> AppendNewSection32(LPVOID pMap, DWORD unFileSize, LPCSTR szName, DWORD unVirtualSize, DWORD unCharacteristics) {
 	PIMAGE_DOS_HEADER pDH = reinterpret_cast<PIMAGE_DOS_HEADER>(pMap);
 	PIMAGE_NT_HEADERS32 pNTHs = reinterpret_cast<PIMAGE_NT_HEADERS32>(reinterpret_cast<char*>(pMap) + pDH->e_lfanew);
 	PIMAGE_FILE_HEADER pFH = &(pNTHs->FileHeader);
@@ -175,9 +174,40 @@ std::tuple<LPVOID, DWORD, DWORD, DWORD, DWORD> AppendNewSection32(LPVOID pMap, L
 	PIMAGE_SECTION_HEADER pFirstSection = reinterpret_cast<PIMAGE_SECTION_HEADER>(reinterpret_cast<char*>(pFH) + sizeof(IMAGE_FILE_HEADER) + pFH->SizeOfOptionalHeader);
 	WORD unNumberOfSections = pFH->NumberOfSections;
 	DWORD unSectionAlignment = pOH->SectionAlignment;
+	DWORD unFileAlignment = pOH->FileAlignment;
 
-	PIMAGE_SECTION_HEADER pNewSection = &pFirstSection[unNumberOfSections];
-	PIMAGE_SECTION_HEADER pLastSection = &pFirstSection[unNumberOfSections - 1];
+	PIMAGE_SECTION_HEADER pNewSection = &(pFirstSection[unNumberOfSections]);
+	PIMAGE_SECTION_HEADER pLastSection = &(pFirstSection[unNumberOfSections - 1]);
+
+	LPVOID pMapEnd = reinterpret_cast<char*>(pMap) + unFileSize;
+	DWORD unSize = reinterpret_cast<DWORD>(pMapEnd) - reinterpret_cast<DWORD>(pNewSection);
+	memmove(reinterpret_cast<char*>(pNewSection) + sizeof(IMAGE_SECTION_HEADER), pNewSection, unSize);
+
+	for (WORD i = unNumberOfSections - 1; i != 0xFFFF; --i) {
+		DWORD unNewPointerToRawData = 0;
+		if (i != 0) {
+			if (pFirstSection[i - 1].SizeOfRawData >= unFileAlignment) {
+				unNewPointerToRawData = P2ALIGNUP(pFirstSection[i - 1].PointerToRawData + pFirstSection[i - 1].SizeOfRawData + sizeof(IMAGE_SECTION_HEADER), unFileAlignment);
+			}
+			else {
+				unNewPointerToRawData = P2ALIGNUP(pFirstSection[i].PointerToRawData + sizeof(IMAGE_SECTION_HEADER), unFileAlignment);
+			}
+		}
+		else {
+			unNewPointerToRawData = P2ALIGNUP(pFirstSection[i].PointerToRawData + sizeof(IMAGE_SECTION_HEADER), unFileAlignment);
+		}
+		//for (WORD j = 0; j < 16; ++j) {
+		//	if ((pOH->DataDirectory[j].VirtualAddress >= pFirstSection[i].VirtualAddress) && (pOH->DataDirectory[j].VirtualAddress < (pFirstSection[i].VirtualAddress + pFirstSection[i].Misc.VirtualSize))) {
+		//	}
+		//}
+		//printf("# %s\n", pFirstSection[i].Name);
+		//printf("unNewPointerToRawData = 0x%08X\n", (unsigned int)unNewPointerToRawData);
+		//printf("   unPointerToRawData = 0x%08X\n", (unsigned int)pFirstSection[i].PointerToRawData);
+		//printf("        SizeOfRawData = 0x%08X\n", (unsigned int)pFirstSection[i].SizeOfRawData);
+		//printf("                 DATA = 0x%08X\n", *(unsigned int*)(reinterpret_cast<char*>(pMap) + pFirstSection[i].PointerToRawData + sizeof(IMAGE_SECTION_HEADER)));
+		memmove(reinterpret_cast<char*>(pMap) + unNewPointerToRawData, reinterpret_cast<char*>(pMap) + pFirstSection[i].PointerToRawData + sizeof(IMAGE_SECTION_HEADER), pFirstSection[i].SizeOfRawData);
+		pFirstSection[i].PointerToRawData = unNewPointerToRawData;
+	}
 
 	memset(pNewSection, 0, sizeof(IMAGE_SECTION_HEADER));
 	memcpy(pNewSection->Name, szName, 8);
@@ -193,7 +223,7 @@ std::tuple<LPVOID, DWORD, DWORD, DWORD, DWORD> AppendNewSection32(LPVOID pMap, L
 	return std::tuple<LPVOID, DWORD, DWORD, DWORD, DWORD>(reinterpret_cast<LPVOID>(reinterpret_cast<char*>(pMap) + pNewSection->PointerToRawData), pNewSection->VirtualAddress, pNewSection->Misc.VirtualSize, pNewSection->PointerToRawData, pNewSection->SizeOfRawData);
 }
 
-std::tuple<LPVOID, DWORD, DWORD, DWORD, DWORD> AppendNewSection64(LPVOID pMap, LPCSTR szName, DWORD unVirtualSize, DWORD unCharacteristics) {
+std::tuple<LPVOID, DWORD, DWORD, DWORD, DWORD> AppendNewSection64(LPVOID pMap, DWORD64 unFileSize, LPCSTR szName, DWORD unVirtualSize, DWORD unCharacteristics) {
 	PIMAGE_DOS_HEADER pDH = reinterpret_cast<PIMAGE_DOS_HEADER>(pMap);
 	PIMAGE_NT_HEADERS64 pNTHs = reinterpret_cast<PIMAGE_NT_HEADERS64>(reinterpret_cast<char*>(pMap) + pDH->e_lfanew);
 	PIMAGE_FILE_HEADER pFH = &(pNTHs->FileHeader);
@@ -202,9 +232,40 @@ std::tuple<LPVOID, DWORD, DWORD, DWORD, DWORD> AppendNewSection64(LPVOID pMap, L
 	PIMAGE_SECTION_HEADER pFirstSection = reinterpret_cast<PIMAGE_SECTION_HEADER>(reinterpret_cast<char*>(pFH) + sizeof(IMAGE_FILE_HEADER) + pFH->SizeOfOptionalHeader);
 	WORD unNumberOfSections = pFH->NumberOfSections;
 	DWORD unSectionAlignment = pOH->SectionAlignment;
+	DWORD unFileAlignment = pOH->FileAlignment;
 
-	PIMAGE_SECTION_HEADER pNewSection = &pFirstSection[unNumberOfSections];
-	PIMAGE_SECTION_HEADER pLastSection = &pFirstSection[unNumberOfSections - 1];
+	PIMAGE_SECTION_HEADER pNewSection = &(pFirstSection[unNumberOfSections]);
+	PIMAGE_SECTION_HEADER pLastSection = &(pFirstSection[unNumberOfSections - 1]);
+
+	LPVOID pMapEnd = reinterpret_cast<char*>(pMap) + unFileSize;
+	DWORD64 unSize = reinterpret_cast<DWORD64>(pMapEnd) - reinterpret_cast<DWORD64>(pNewSection);
+	memmove(reinterpret_cast<char*>(pNewSection) + sizeof(IMAGE_SECTION_HEADER), pNewSection, unSize);
+
+	for (WORD i = unNumberOfSections - 1; i != 0xFFFF; --i) {
+		DWORD unNewPointerToRawData = 0;
+		if (i != 0) {
+			if (pFirstSection[i - 1].SizeOfRawData >= unFileAlignment) {
+				unNewPointerToRawData = P2ALIGNUP(pFirstSection[i - 1].PointerToRawData + pFirstSection[i - 1].SizeOfRawData + sizeof(IMAGE_SECTION_HEADER), unFileAlignment);
+			}
+			else {
+				unNewPointerToRawData = P2ALIGNUP(pFirstSection[i].PointerToRawData + sizeof(IMAGE_SECTION_HEADER), unFileAlignment);
+			}
+		}
+		else {
+			unNewPointerToRawData = P2ALIGNUP(pFirstSection[i].PointerToRawData + sizeof(IMAGE_SECTION_HEADER), unFileAlignment);
+		}
+		//for (WORD j = 0; j < 16; ++j) {
+		//	if ((pOH->DataDirectory[j].VirtualAddress >= pFirstSection[i].VirtualAddress) && (pOH->DataDirectory[j].VirtualAddress < (pFirstSection[i].VirtualAddress + pFirstSection[i].Misc.VirtualSize))) {
+		//	}
+		//}
+		//printf("# %s\n", pFirstSection[i].Name);
+		//printf("unNewPointerToRawData = 0x%08X\n", (unsigned int)unNewPointerToRawData);
+		//printf("   unPointerToRawData = 0x%08X\n", (unsigned int)pFirstSection[i].PointerToRawData);
+		//printf("        SizeOfRawData = 0x%08X\n", (unsigned int)pFirstSection[i].SizeOfRawData);
+		//printf("                 DATA = 0x%08X\n", *(unsigned int*)(reinterpret_cast<char*>(pMap) + pFirstSection[i].PointerToRawData + sizeof(IMAGE_SECTION_HEADER)));
+		memmove(reinterpret_cast<char*>(pMap) + unNewPointerToRawData, reinterpret_cast<char*>(pMap) + pFirstSection[i].PointerToRawData + sizeof(IMAGE_SECTION_HEADER), pFirstSection[i].SizeOfRawData);
+		pFirstSection[i].PointerToRawData = unNewPointerToRawData;
+	}
 
 	memset(pNewSection, 0, sizeof(IMAGE_SECTION_HEADER));
 	memcpy(pNewSection->Name, szName, 8);
@@ -943,7 +1004,14 @@ int main(int argc, char* argv[], char* envp[])
 
 		PRINT_INFO("Working with Target...");
 
-		DWORD unNewFileSize = P2ALIGNUP(unFileSize + g_unDataSectionSize + g_unCodeSectionSize, pSrcOH->FileAlignment);
+		PIMAGE_SECTION_HEADER pSrcFirstSection = reinterpret_cast<PIMAGE_SECTION_HEADER>(reinterpret_cast<char*>(pSrcFH) + sizeof(IMAGE_FILE_HEADER) + pSrcFH->SizeOfOptionalHeader);
+
+		DWORD unAdditionalSize = 0;
+		for (DWORD i = 0; i < pSrcFH->NumberOfSections; ++i) {
+			unAdditionalSize += P2ALIGNUP(pSrcFirstSection[i].PointerToRawData + sizeof(IMAGE_SECTION_HEADER), pSrcOH->FileAlignment) - pSrcFirstSection[i].PointerToRawData;
+		}
+
+		DWORD unNewFileSize = P2ALIGNUP(unFileSize + unAdditionalSize + sizeof(IMAGE_SECTION_HEADER) * 2 + g_unDataSectionSize + g_unCodeSectionSize, pSrcOH->FileAlignment);
 		PRINT_POSITIVE("TargetSize: %lu bytes.", unNewFileSize);
 
 		std::tuple<HANDLE, HANDLE, LPVOID> dst = MapNewFile(szOutputFile, unNewFileSize);
@@ -986,7 +1054,7 @@ int main(int argc, char* argv[], char* envp[])
 			PRINT_VERBOSE("Appending sectors...")
 		}
 
-		std::tuple<LPVOID, DWORD, DWORD, DWORD, DWORD> datasect = AppendNewSection32(pDstMap, ".rxdata", g_unDataSectionSize, IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE);
+		std::tuple<LPVOID, DWORD, DWORD, DWORD, DWORD> datasect = AppendNewSection32(pDstMap, unNewFileSize, ".rxdata", g_unDataSectionSize, IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE);
 		LPVOID datasect_ptr = std::get<0>(datasect);
 		DWORD datasect_virtualaddress = std::get<1>(datasect);
 		DWORD datasect_virtualsize = std::get<2>(datasect);
@@ -1002,7 +1070,7 @@ int main(int argc, char* argv[], char* envp[])
 
 		memset(datasect_ptr, 0x00 /* NULLs... */, datasect_rawsize);
 
-		std::tuple<LPVOID, DWORD, DWORD, DWORD, DWORD> codesect = AppendNewSection32(pDstMap, ".rxtext", g_unCodeSectionSize, IMAGE_SCN_CNT_CODE | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_READ);
+		std::tuple<LPVOID, DWORD, DWORD, DWORD, DWORD> codesect = AppendNewSection32(pDstMap, unNewFileSize, ".rxtext", g_unCodeSectionSize, IMAGE_SCN_CNT_CODE | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_READ);
 		LPVOID codesect_ptr = std::get<0>(codesect);
 		DWORD codesect_virtualaddress = std::get<1>(codesect);
 		DWORD codesect_virtualsize = std::get<2>(codesect);
@@ -1102,6 +1170,8 @@ int main(int argc, char* argv[], char* envp[])
 			}
 		}
 
+		pDstOH->CheckSum = 0;
+
 	}
 	else if (pSrcFH->Machine == IMAGE_FILE_MACHINE_AMD64) {
 		PRINT_INFO("Detected 64BIT machine.");
@@ -1165,7 +1235,7 @@ int main(int argc, char* argv[], char* envp[])
 			PRINT_VERBOSE("Appending sectors...")
 		}
 
-		std::tuple<LPVOID, DWORD, DWORD, DWORD, DWORD> datasect = AppendNewSection64(pDstMap, ".rxdata", g_unDataSectionSize, IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE);
+		std::tuple<LPVOID, DWORD, DWORD, DWORD, DWORD> datasect = AppendNewSection64(pDstMap, unNewFileSize, ".rxdata", g_unDataSectionSize, IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE);
 		LPVOID datasect_ptr = std::get<0>(datasect);
 		DWORD datasect_virtualaddress = std::get<1>(datasect);
 		DWORD datasect_virtualsize = std::get<2>(datasect);
@@ -1181,7 +1251,7 @@ int main(int argc, char* argv[], char* envp[])
 
 		memset(datasect_ptr, 0x00 /* NULLs... */, datasect_rawsize);
 
-		std::tuple<LPVOID, DWORD, DWORD, DWORD, DWORD> codesect = AppendNewSection64(/*unFileSize,*/ pDstMap, ".rxtext", g_unCodeSectionSize, IMAGE_SCN_CNT_CODE | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_READ);
+		std::tuple<LPVOID, DWORD, DWORD, DWORD, DWORD> codesect = AppendNewSection64(pDstMap, unNewFileSize, ".rxtext", g_unCodeSectionSize, IMAGE_SCN_CNT_CODE | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_READ);
 		LPVOID codesect_ptr = std::get<0>(codesect);
 		DWORD codesect_virtualaddress = std::get<1>(codesect);
 		DWORD codesect_virtualsize = std::get<2>(codesect);
