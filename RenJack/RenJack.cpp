@@ -672,9 +672,8 @@ std::vector<unsigned char> Assembly64(ULONGLONG nBaseAddress, PCHAR szAsm) {
 	return data;
 }
 
-int main(int argc, char* argv[], char* envp[])
-{
-	clrprintf(ConsoleColor::White, "RenJack by Ren (zeze839@gmail.com) [Version 1.0.0.1]\n\n");
+int main(int argc, char* argv[], char* envp[]) {
+	clrprintf(ConsoleColor::White, "RenJack by Ren (zeze839@gmail.com) [Version 2.0.0.1]\n\n");
 	
 	char szMainFileName[32];
 	memset(szMainFileName, 0, sizeof(szMainFileName));
@@ -1192,7 +1191,14 @@ int main(int argc, char* argv[], char* envp[])
 
 		PRINT_INFO("Working with Target...");
 
-		DWORD unNewFileSize = P2ALIGNUP(unFileSize + g_unDataSectionSize + g_unCodeSectionSize, pSrcOH->FileAlignment);
+		PIMAGE_SECTION_HEADER pSrcFirstSection = reinterpret_cast<PIMAGE_SECTION_HEADER>(reinterpret_cast<char*>(pSrcFH) + sizeof(IMAGE_FILE_HEADER) + pSrcFH->SizeOfOptionalHeader);
+
+		DWORD unAdditionalSize = 0;
+		for (DWORD i = 0; i < pSrcFH->NumberOfSections; ++i) {
+			unAdditionalSize += P2ALIGNUP(pSrcFirstSection[i].PointerToRawData + sizeof(IMAGE_SECTION_HEADER), pSrcOH->FileAlignment) - pSrcFirstSection[i].PointerToRawData;
+		}
+
+		DWORD unNewFileSize = P2ALIGNUP(unFileSize + unAdditionalSize + sizeof(IMAGE_SECTION_HEADER) * 2 + g_unDataSectionSize + g_unCodeSectionSize, pSrcOH->FileAlignment);
 		PRINT_POSITIVE("TargetSize: %lu bytes.", unNewFileSize);
 
 		std::tuple<HANDLE, HANDLE, LPVOID> dst = MapNewFile(szOutputFile, unNewFileSize);
