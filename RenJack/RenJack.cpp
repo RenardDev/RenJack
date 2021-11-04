@@ -36,6 +36,7 @@
 
 DWORD g_unDataSectionSize = 0x1000;
 DWORD g_unCodeSectionSize = 0x1000;
+DWORD g_unHookSize = 0x10;
 DWORD g_unVerboseLevel = 0;
 
 std::tuple<HANDLE, HANDLE, LPVOID> MapFile(const char* fpath) {
@@ -211,7 +212,7 @@ std::tuple<LPVOID, DWORD, DWORD, DWORD, DWORD> AppendNewSection32(LPVOID pMap, D
 	}
 
 	memset(pNewSection, 0, sizeof(IMAGE_SECTION_HEADER));
-	memcpy(pNewSection->Name, szName, 8);
+	memcpy_s(reinterpret_cast<char*>(pNewSection->Name), 8, szName, strnlen_s(szName, 8));
 	pNewSection->Misc.VirtualSize = unVirtualSize;
 	pNewSection->VirtualAddress = P2ALIGNUP(pLastSection->VirtualAddress + pLastSection->Misc.VirtualSize, unSectionAlignment);
 	pNewSection->SizeOfRawData = P2ALIGNUP(unVirtualSize, pOH->FileAlignment);
@@ -269,7 +270,7 @@ std::tuple<LPVOID, DWORD, DWORD, DWORD, DWORD> AppendNewSection64(LPVOID pMap, D
 	}
 
 	memset(pNewSection, 0, sizeof(IMAGE_SECTION_HEADER));
-	memcpy(pNewSection->Name, szName, 8);
+	memcpy_s(reinterpret_cast<char*>(pNewSection->Name), 8, szName, strnlen_s(szName, 8));
 	pNewSection->Misc.VirtualSize = unVirtualSize;
 	pNewSection->VirtualAddress = P2ALIGNUP(pLastSection->VirtualAddress + pLastSection->Misc.VirtualSize, unSectionAlignment);
 	pNewSection->SizeOfRawData = P2ALIGNUP(unVirtualSize, pOH->FileAlignment);
@@ -282,8 +283,7 @@ std::tuple<LPVOID, DWORD, DWORD, DWORD, DWORD> AppendNewSection64(LPVOID pMap, D
 	return std::tuple<LPVOID, DWORD, DWORD, DWORD, DWORD>(reinterpret_cast<LPVOID>(reinterpret_cast<char*>(pMap) + pNewSection->PointerToRawData), pNewSection->VirtualAddress, pNewSection->Misc.VirtualSize, pNewSection->PointerToRawData, pNewSection->SizeOfRawData);
 }
 
-/*
-std::vector<std::tuple<PDWORD, PWORD, char*>> GetExports32(LPVOID pMap) {
+std::vector<std::tuple<PDWORD, PWORD, char*>> GetExports32(LPVOID pMap, bool bFunctionsOnly = true) {
 	PIMAGE_DOS_HEADER pDH = reinterpret_cast<PIMAGE_DOS_HEADER>(pMap);
 	PIMAGE_NT_HEADERS32 pNTHs = reinterpret_cast<PIMAGE_NT_HEADERS32>(reinterpret_cast<char*>(pMap) + pDH->e_lfanew);
 	PIMAGE_FILE_HEADER pFH = &(pNTHs->FileHeader);
@@ -295,10 +295,10 @@ std::vector<std::tuple<PDWORD, PWORD, char*>> GetExports32(LPVOID pMap) {
 
 	std::vector<std::tuple<PDWORD, PWORD, char*>> vecData;
 
-	for (DWORD i = 0; i < pFH->NumberOfSections; ++i, ++pFirstSection) {
-		if ((ExportDD.VirtualAddress >= pFirstSection->VirtualAddress) && (ExportDD.VirtualAddress < (pFirstSection->VirtualAddress + pFirstSection->Misc.VirtualSize))) {
+	for (DWORD i = 0; i < pFH->NumberOfSections; ++i) {
+		if ((ExportDD.VirtualAddress >= pFirstSection[i].VirtualAddress) && (ExportDD.VirtualAddress < (pFirstSection[i].VirtualAddress + pFirstSection[i].Misc.VirtualSize))) {
 
-			DWORD unDelta = pFirstSection->VirtualAddress - pFirstSection->PointerToRawData;
+			DWORD unDelta = pFirstSection[i].VirtualAddress - pFirstSection[i].PointerToRawData;
 
 			PIMAGE_EXPORT_DIRECTORY pExportDirectory = reinterpret_cast<PIMAGE_EXPORT_DIRECTORY>(reinterpret_cast<char*>(pMap) + ExportDD.VirtualAddress - unDelta);
 
@@ -311,7 +311,21 @@ std::vector<std::tuple<PDWORD, PWORD, char*>> GetExports32(LPVOID pMap) {
 					if (pOrdinals[l] == j) {
 						//PRINT_INFO("Export: 0x%08X   `%s`", unFunction, reinterpret_cast<char*>(pMap) + reinterpret_cast<DWORD>(pNames[l]) - unDelta);
 						//std::tuple<DWORD, WORD, std::unique_ptr<char>>()
-						vecData.push_back(std::tuple<PDWORD, PWORD, char*>(&(pFunctions[j]), &(pOrdinals[l]), reinterpret_cast<char*>(pMap) + reinterpret_cast<DWORD>(pNames[l]) - unDelta));
+						if (!bFunctionsOnly) {
+							vecData.push_back(std::tuple<PDWORD, PWORD, char*>(&(pFunctions[j]), &(pOrdinals[l]), reinterpret_cast<char*>(pMap) + reinterpret_cast<DWORD>(pNames[l]) - unDelta));
+						}
+						else {
+							for (DWORD k = 0; k < pFH->NumberOfSections; ++k) {
+								char* pRawOffset = reinterpret_cast<char*>(pMap) + pFirstSection[k].PointerToRawData;
+								PDWORD pFunction = reinterpret_cast<PDWORD>(reinterpret_cast<char*>(pMap) + pFunctions[j]);
+
+								if ((reinterpret_cast<DWORD>(pFunction) >= reinterpret_cast<DWORD>(pRawOffset)) && (reinterpret_cast<DWORD>(pFunction) <= (reinterpret_cast<DWORD>(pRawOffset) + pFirstSection[k].SizeOfRawData))) {
+									if (pFirstSection[k].Characteristics & IMAGE_SCN_MEM_EXECUTE) {
+										vecData.push_back(std::tuple<PDWORD, PWORD, char*>(&(pFunctions[j]), &(pOrdinals[l]), reinterpret_cast<char*>(pMap) + reinterpret_cast<DWORD>(pNames[l]) - unDelta));
+									}
+								}
+							}
+						}
 					}
 				}
 			}
@@ -321,7 +335,8 @@ std::vector<std::tuple<PDWORD, PWORD, char*>> GetExports32(LPVOID pMap) {
 	return vecData;
 }
 
-std::vector<std::tuple<PIMAGE_IMPORT_DESCRIPTOR, char*, DWORD, PDWORD, PWORD, char*>> GetImports32(LPVOID pMap) {
+/*
+std::vector<std::tuple<PIMAGE_IMPORT_DESCRIPTOR, PIMAGE_THUNK_DATA32, PIMAGE_THUNK_DATA32, char*, DWORD, PDWORD, PWORD, char*>> GetImports32(LPVOID pMap) {
 	PIMAGE_DOS_HEADER pDH = reinterpret_cast<PIMAGE_DOS_HEADER>(pMap);
 	PIMAGE_NT_HEADERS32 pNTHs = reinterpret_cast<PIMAGE_NT_HEADERS32>(reinterpret_cast<char*>(pMap) + pDH->e_lfanew);
 	PIMAGE_FILE_HEADER pFH = &(pNTHs->FileHeader);
@@ -331,7 +346,7 @@ std::vector<std::tuple<PIMAGE_IMPORT_DESCRIPTOR, char*, DWORD, PDWORD, PWORD, ch
 
 	PIMAGE_SECTION_HEADER pFirstSection = reinterpret_cast<PIMAGE_SECTION_HEADER>(reinterpret_cast<char*>(pFH) + sizeof(IMAGE_FILE_HEADER) + pFH->SizeOfOptionalHeader);
 
-	std::vector<std::tuple<PIMAGE_IMPORT_DESCRIPTOR, char*, DWORD, PDWORD, PWORD, char*>> vecData;
+	std::vector<std::tuple<PIMAGE_IMPORT_DESCRIPTOR, PIMAGE_THUNK_DATA32, PIMAGE_THUNK_DATA32, char*, DWORD, PDWORD, PWORD, char*>> vecData;
 
 	for (DWORD i = 0; i < pFH->NumberOfSections; ++i, ++pFirstSection) {
 		if ((ImportDD.VirtualAddress >= pFirstSection->VirtualAddress) && (ImportDD.VirtualAddress < (pFirstSection->VirtualAddress + pFirstSection->Misc.VirtualSize))) {
@@ -362,12 +377,12 @@ std::vector<std::tuple<PIMAGE_IMPORT_DESCRIPTOR, char*, DWORD, PDWORD, PWORD, ch
 				for (; pThunkDataImportNameTable->u1.AddressOfData != 0; ++pThunkDataImportNameTable, ++pThunkDataImportAddressTable) {
 					if (pThunkDataImportNameTable->u1.Ordinal & IMAGE_ORDINAL_FLAG32) {
 						//PRINT_INFO(" -> 0x%08X   `0x%04X` (Ordinal)", pThunkDataImportAddressTable->u1.Function, pThunkDataImportNameTable->u1.Ordinal & 0xFFFF);
-						vecData.push_back(std::tuple<PIMAGE_IMPORT_DESCRIPTOR, char*, DWORD, PDWORD, PWORD, char*>(pCurrentImportDesc, reinterpret_cast<char*>(pRawOffset + (pCurrentImportDesc->Name - pFirstSection->VirtualAddress)), reinterpret_cast<DWORD>((reinterpret_cast<char*>(pThunkDataImportAddressTable) + pFirstSection->VirtualAddress) - reinterpret_cast<DWORD>(pRawOffset)), &(pThunkDataImportAddressTable->u1.Function), reinterpret_cast<PWORD>(&(pThunkDataImportNameTable->u1.Ordinal)), nullptr));
+						vecData.push_back(std::tuple<PIMAGE_IMPORT_DESCRIPTOR, PIMAGE_THUNK_DATA32, PIMAGE_THUNK_DATA32, char*, DWORD, PDWORD, PWORD, char*>(pCurrentImportDesc, pThunkDataImportNameTable, pThunkDataImportAddressTable, reinterpret_cast<char*>(pRawOffset + (pCurrentImportDesc->Name - pFirstSection->VirtualAddress)), reinterpret_cast<DWORD>((reinterpret_cast<char*>(pThunkDataImportAddressTable) + pFirstSection->VirtualAddress) - reinterpret_cast<DWORD>(pRawOffset)), &(pThunkDataImportAddressTable->u1.Function), reinterpret_cast<PWORD>(&(pThunkDataImportNameTable->u1.Ordinal)), nullptr));
 					}
 					else {
 						PIMAGE_IMPORT_BY_NAME pImportByName = reinterpret_cast<PIMAGE_IMPORT_BY_NAME>(pRawOffset + (pThunkDataImportNameTable->u1.AddressOfData - pFirstSection->VirtualAddress));
 						//PRINT_INFO(" -> 0x%08X   `%s`", reinterpret_cast<DWORD>((reinterpret_cast<char*>(pThunkDataImportAddressTable) + pFirstSection->VirtualAddress) - reinterpret_cast<DWORD>(pRawOffset)), pImportByName->Name);
-						vecData.push_back(std::tuple<PIMAGE_IMPORT_DESCRIPTOR, char*, DWORD, PDWORD, PWORD, char*>(pCurrentImportDesc, reinterpret_cast<char*>(pRawOffset + (pCurrentImportDesc->Name - pFirstSection->VirtualAddress)), reinterpret_cast<DWORD>((reinterpret_cast<char*>(pThunkDataImportAddressTable) + pFirstSection->VirtualAddress) - reinterpret_cast<DWORD>(pRawOffset)), &(pThunkDataImportAddressTable->u1.Function), reinterpret_cast<PWORD>(&(pThunkDataImportNameTable->u1.Ordinal)), pImportByName->Name));
+						vecData.push_back(std::tuple<PIMAGE_IMPORT_DESCRIPTOR, PIMAGE_THUNK_DATA32, PIMAGE_THUNK_DATA32, char*, DWORD, PDWORD, PWORD, char*>(pCurrentImportDesc, pThunkDataImportNameTable, pThunkDataImportAddressTable, reinterpret_cast<char*>(pRawOffset + (pCurrentImportDesc->Name - pFirstSection->VirtualAddress)), reinterpret_cast<DWORD>((reinterpret_cast<char*>(pThunkDataImportAddressTable) + pFirstSection->VirtualAddress) - reinterpret_cast<DWORD>(pRawOffset)), &(pThunkDataImportAddressTable->u1.Function), reinterpret_cast<PWORD>(&(pThunkDataImportNameTable->u1.Ordinal)), pImportByName->Name));
 					}
 				}
 			}
@@ -376,8 +391,9 @@ std::vector<std::tuple<PIMAGE_IMPORT_DESCRIPTOR, char*, DWORD, PDWORD, PWORD, ch
 
 	return vecData;
 }
+*/
 
-std::vector<std::tuple<PULONGLONG, PULONGLONG, char*>> GetExports64(LPVOID pMap) {
+std::vector<std::tuple<PDWORD, PWORD, char*>> GetExports64(LPVOID pMap, bool bFunctionsOnly = true) {
 	PIMAGE_DOS_HEADER pDH = reinterpret_cast<PIMAGE_DOS_HEADER>(pMap);
 	PIMAGE_NT_HEADERS64 pNTHs = reinterpret_cast<PIMAGE_NT_HEADERS64>(reinterpret_cast<char*>(pMap) + pDH->e_lfanew);
 	PIMAGE_FILE_HEADER pFH = &(pNTHs->FileHeader);
@@ -387,12 +403,12 @@ std::vector<std::tuple<PULONGLONG, PULONGLONG, char*>> GetExports64(LPVOID pMap)
 
 	PIMAGE_SECTION_HEADER pFirstSection = reinterpret_cast<PIMAGE_SECTION_HEADER>(reinterpret_cast<char*>(pFH) + sizeof(IMAGE_FILE_HEADER) + pFH->SizeOfOptionalHeader);
 
-	std::vector<std::tuple<PULONGLONG, PWORD, char*>> vecData;
+	std::vector<std::tuple<PDWORD, PWORD, char*>> vecData;
 
-	for (DWORD i = 0; i < pFH->NumberOfSections; ++i, ++pFirstSection) {
-		if ((ExportDD.VirtualAddress >= pFirstSection->VirtualAddress) && (ExportDD.VirtualAddress < (pFirstSection->VirtualAddress + pFirstSection->Misc.VirtualSize))) {
+	for (DWORD i = 0; i < pFH->NumberOfSections; ++i) {
+		if ((ExportDD.VirtualAddress >= pFirstSection[i].VirtualAddress) && (ExportDD.VirtualAddress < (pFirstSection[i].VirtualAddress + pFirstSection[i].Misc.VirtualSize))) {
 
-			DWORD unDelta = pFirstSection->VirtualAddress - pFirstSection->PointerToRawData;
+			DWORD unDelta = pFirstSection[i].VirtualAddress - pFirstSection[i].PointerToRawData;
 
 			PIMAGE_EXPORT_DIRECTORY pExportDirectory = reinterpret_cast<PIMAGE_EXPORT_DIRECTORY>(reinterpret_cast<char*>(pMap) + ExportDD.VirtualAddress - unDelta);
 
@@ -403,9 +419,23 @@ std::vector<std::tuple<PULONGLONG, PULONGLONG, char*>> GetExports64(LPVOID pMap)
 			for (DWORD j = 0; j < pExportDirectory->NumberOfFunctions; ++j) {
 				for (DWORD l = 0; l < pExportDirectory->NumberOfNames; ++l) {
 					if (pOrdinals[l] == j) {
-						//PRINT_INFO("Export: 0x%08X   `%s`", unFunction, reinterpret_cast<char*>(pMap) + reinterpret_cast<DWORD>(pNames[l]) - unDelta);
+						//PRINT_INFO("Export: 0x%08X   `%s`", &(pFunctions[j]), reinterpret_cast<char*>(pMap) + reinterpret_cast<DWORD>(pNames[l]) - unDelta);
 						//std::tuple<DWORD, WORD, std::unique_ptr<char>>()
-						vecData.push_back(std::tuple<PDWORD, PWORD, char*>(&(pFunctions[j]), &(pOrdinals[l]), reinterpret_cast<char*>(pMap) + reinterpret_cast<DWORD>(pNames[l]) - unDelta));
+						if (!bFunctionsOnly) {
+							vecData.push_back(std::tuple<PDWORD, PWORD, char*>(&(pFunctions[j]), &(pOrdinals[l]), reinterpret_cast<char*>(pMap) + reinterpret_cast<DWORD>(pNames[l]) - unDelta));
+						}
+						else {
+							for (DWORD k = 0; k < pFH->NumberOfSections; ++k) {
+								char* pRawOffset = reinterpret_cast<char*>(pMap) + pFirstSection[k].PointerToRawData;
+								PDWORD pFunction = reinterpret_cast<PDWORD>(reinterpret_cast<char*>(pMap) + pFunctions[j]);
+
+								if ((reinterpret_cast<DWORD>(pFunction) >= reinterpret_cast<DWORD>(pRawOffset)) && (reinterpret_cast<DWORD>(pFunction) <= (reinterpret_cast<DWORD>(pRawOffset) + pFirstSection[k].SizeOfRawData))) {
+									if (pFirstSection[k].Characteristics & IMAGE_SCN_MEM_EXECUTE) {
+										vecData.push_back(std::tuple<PDWORD, PWORD, char*>(&(pFunctions[j]), &(pOrdinals[l]), reinterpret_cast<char*>(pMap) + reinterpret_cast<DWORD>(pNames[l]) - unDelta));
+									}
+								}
+							}
+						}
 					}
 				}
 			}
@@ -415,7 +445,8 @@ std::vector<std::tuple<PULONGLONG, PULONGLONG, char*>> GetExports64(LPVOID pMap)
 	return vecData;
 }
 
-std::vector<std::tuple<PIMAGE_IMPORT_DESCRIPTOR, char*, DWORD, PULONGLONG, PULONGLONG, char*>> GetImports64(LPVOID pMap) {
+/*
+std::vector<std::tuple<PIMAGE_IMPORT_DESCRIPTOR, PIMAGE_THUNK_DATA64, PIMAGE_THUNK_DATA64, char*, DWORD, PULONGLONG, PULONGLONG, char*>> GetImports64(LPVOID pMap) {
 	PIMAGE_DOS_HEADER pDH = reinterpret_cast<PIMAGE_DOS_HEADER>(pMap);
 	PIMAGE_NT_HEADERS64 pNTHs = reinterpret_cast<PIMAGE_NT_HEADERS64>(reinterpret_cast<char*>(pMap) + pDH->e_lfanew);
 	PIMAGE_FILE_HEADER pFH = &(pNTHs->FileHeader);
@@ -425,7 +456,7 @@ std::vector<std::tuple<PIMAGE_IMPORT_DESCRIPTOR, char*, DWORD, PULONGLONG, PULON
 
 	PIMAGE_SECTION_HEADER pFirstSection = reinterpret_cast<PIMAGE_SECTION_HEADER>(reinterpret_cast<char*>(pFH) + sizeof(IMAGE_FILE_HEADER) + pFH->SizeOfOptionalHeader);
 
-	std::vector<std::tuple<PIMAGE_IMPORT_DESCRIPTOR, char*, DWORD, PULONGLONG, PULONGLONG, char*>> vecData;
+	std::vector<std::tuple<PIMAGE_IMPORT_DESCRIPTOR, PIMAGE_THUNK_DATA64, PIMAGE_THUNK_DATA64, char*, DWORD, PULONGLONG, PULONGLONG, char*>> vecData;
 
 	for (DWORD i = 0; i < pFH->NumberOfSections; ++i, ++pFirstSection) {
 		if ((ImportDD.VirtualAddress >= pFirstSection->VirtualAddress) && (ImportDD.VirtualAddress < (pFirstSection->VirtualAddress + pFirstSection->Misc.VirtualSize))) {
@@ -455,13 +486,13 @@ std::vector<std::tuple<PIMAGE_IMPORT_DESCRIPTOR, char*, DWORD, PULONGLONG, PULON
 
 				for (; pThunkDataImportNameTable->u1.AddressOfData != 0; ++pThunkDataImportNameTable, ++pThunkDataImportAddressTable) {
 					if (pThunkDataImportNameTable->u1.Ordinal & IMAGE_ORDINAL_FLAG32) {
-						//PRINT_INFO(" -> 0x%08X   `0x%04X` (Ordinal)", pThunkDataImportAddressTable->u1.Function, pThunkDataImportNameTable->u1.Ordinal & 0xFFFF);
-						vecData.push_back(std::tuple<PIMAGE_IMPORT_DESCRIPTOR, char*, DWORD, PULONGLONG, PULONGLONG, char*>(pCurrentImportDesc, reinterpret_cast<char*>(pRawOffset + (pCurrentImportDesc->Name - pFirstSection->VirtualAddress)), reinterpret_cast<DWORD>((reinterpret_cast<char*>(pThunkDataImportAddressTable) + pFirstSection->VirtualAddress) - reinterpret_cast<ULONGLONG>(pRawOffset)), &(pThunkDataImportAddressTable->u1.Function), reinterpret_cast<PULONGLONG>(&(pThunkDataImportNameTable->u1.Ordinal)), nullptr));
+						//PRINT_INFO(" -> 0x%016I64X   `0x%04X` (Ordinal)", pThunkDataImportAddressTable->u1.Function, pThunkDataImportNameTable->u1.Ordinal & 0xFFFF);
+						vecData.push_back(std::tuple<PIMAGE_IMPORT_DESCRIPTOR, PIMAGE_THUNK_DATA64, PIMAGE_THUNK_DATA64, char*, DWORD, PULONGLONG, PULONGLONG, char*>(pCurrentImportDesc, pThunkDataImportNameTable, pThunkDataImportAddressTable, reinterpret_cast<char*>(pRawOffset + (pCurrentImportDesc->Name - pFirstSection->VirtualAddress)), reinterpret_cast<DWORD>((reinterpret_cast<char*>(pThunkDataImportAddressTable) + pFirstSection->VirtualAddress) - reinterpret_cast<ULONGLONG>(pRawOffset)), &(pThunkDataImportAddressTable->u1.Function), &(pThunkDataImportNameTable->u1.Ordinal), nullptr));
 					}
 					else {
 						PIMAGE_IMPORT_BY_NAME pImportByName = reinterpret_cast<PIMAGE_IMPORT_BY_NAME>(pRawOffset + (pThunkDataImportNameTable->u1.AddressOfData - pFirstSection->VirtualAddress));
-						//PRINT_INFO(" -> 0x%08X   `%s`", reinterpret_cast<DWORD>((reinterpret_cast<char*>(pThunkDataImportAddressTable) + pFirstSection->VirtualAddress) - reinterpret_cast<DWORD>(pRawOffset)), pImportByName->Name);
-						vecData.push_back(std::tuple<PIMAGE_IMPORT_DESCRIPTOR, char*, DWORD, PULONGLONG, PULONGLONG, char*>(pCurrentImportDesc, reinterpret_cast<char*>(pRawOffset + (pCurrentImportDesc->Name - pFirstSection->VirtualAddress)), reinterpret_cast<DWORD>((reinterpret_cast<char*>(pThunkDataImportAddressTable) + pFirstSection->VirtualAddress) - reinterpret_cast<ULONGLONG>(pRawOffset)), &(pThunkDataImportAddressTable->u1.Function), reinterpret_cast<PULONGLONG>(&(pThunkDataImportNameTable->u1.Ordinal)), pImportByName->Name));
+						//PRINT_INFO(" -> 0x%016I64X   `%s`", reinterpret_cast<ULONGLONG>((reinterpret_cast<char*>(pThunkDataImportAddressTable) + pFirstSection->VirtualAddress) - reinterpret_cast<DWORD>(pRawOffset)), pImportByName->Name);
+						vecData.push_back(std::tuple<PIMAGE_IMPORT_DESCRIPTOR, PIMAGE_THUNK_DATA64, PIMAGE_THUNK_DATA64, char*, DWORD, PULONGLONG, PULONGLONG, char*>(pCurrentImportDesc, pThunkDataImportNameTable, pThunkDataImportAddressTable, reinterpret_cast<char*>(pRawOffset + (pCurrentImportDesc->Name - pFirstSection->VirtualAddress)), reinterpret_cast<DWORD>((reinterpret_cast<char*>(pThunkDataImportAddressTable) + pFirstSection->VirtualAddress) - reinterpret_cast<ULONGLONG>(pRawOffset)), &(pThunkDataImportAddressTable->u1.Function), &(pThunkDataImportNameTable->u1.Ordinal), pImportByName->Name));
 					}
 				}
 			}
@@ -470,7 +501,8 @@ std::vector<std::tuple<PIMAGE_IMPORT_DESCRIPTOR, char*, DWORD, PULONGLONG, PULON
 
 	return vecData;
 }
-
+*/
+/*
 std::vector<std::tuple<PDWORD, PWORD, char*>> vecExports32;
 std::vector<std::tuple<PIMAGE_IMPORT_DESCRIPTOR, char*, DWORD, PDWORD, PDWORD, char*>> vecImports32;
 std::vector<std::tuple<PDWORD, PWORD, char*>> vecExports64;
@@ -663,7 +695,7 @@ std::vector<unsigned char> Assembly64(ULONGLONG nBaseAddress, PCHAR szAsm) {
 }
 
 int main(int argc, char* argv[], char* envp[]) {
-	clrprintf(ConsoleColor::White, "RenJack by Ren (zeze839@gmail.com) [Version 2.0.0.1]\n\n");
+	clrprintf(ConsoleColor::White, "RenJack by Ren (zeze839@gmail.com) [Version 2.2]\n\n");
 	
 	char szMainFileName[32];
 	memset(szMainFileName, 0, sizeof(szMainFileName));
@@ -683,14 +715,16 @@ int main(int argc, char* argv[], char* envp[]) {
 	}
 
 	if (argc < 2) {
-		PRINT_WARNING("Usage: %s [/verbose:<level>] [/maxdatasize:<bytes>] [/maxcodesize:<bytes>] [/disabledep] [/disableaslr] [/forceguardcf] [/noentrypoint] [/input:<file>] [/payload:<file>] [/savepayload] [/outputpayload:<file>] [/output:<file>]\n", szMainFile);
+		//PRINT_WARNING("Usage: %s [/verbose:<level>] [/maxdatasize:<bytes>] [/maxcodesize:<bytes>] [/disabledep] [/disableaslr] [/forceguardcf] [/noentrypoint] [/hookexports] [/hookimports] [/hookall] [/hooksize:<bytes>] [/input:<file>] [/payload:<file>] [/savepayload] [/outputpayload:<file>] [/output:<file>]\n", szMainFile);
+		PRINT_WARNING("Usage: %s [/verbose:<level>] [/maxdatasize:<bytes>] [/maxcodesize:<bytes>] [/disabledep] [/disableaslr] [/forceguardcf] [/noentrypoint] [/hookexports] [/hookimports] [/hookall] [/hooksize:<bytes>] [/input:<file>] [/payload:<file>] [/savepayload] [/outputpayload:<file>] [/output:<file>]\n", szMainFile);
 		return -1;
 	}
 	else {
 		for (int i = 0; i < argc; ++i) {
 			const char* arg = argv[i];
 			if (!strncmp(arg, "/help", 5) || !strncmp(arg, "/?", 2)) {
-				PRINT_WARNING("Usage: %s [/verbose:<level>] [/maxdatasize:<bytes>] [/maxcodesize:<bytes>] [/disabledep] [/disableaslr] [/forceguardcf] [/noentrypoint] [/input:<file>] [/payload:<file>] [/savepayload] [/outputpayload:<file>] [/output:<file>]\n\n    /verbose:<level> - Verbosity level.\n    /maxdatasize - Maximum `.rxdata` size. (Default: 4096)\n    /maxcodesize - Maximum `.rxtext` size. (Default: 4096)\n    /disabledep - Disables DEP.\n    /disableaslr - Disables ASLR.\n    /forceguardcf - Force processing for GuardCF protected executable.\n    /noentrypoint - No entry point.\n    /input:<file> - Input PE executable.\n    /payload:<file> - Input binary (.bin) or assembly file (.asm). (Default: null)\n    /savepayload - Save payload to binary file.\n    /outputpayload - Output payload binary. (Default: The name of the output file with `.bin` extension.)\n    /output:<file> - Output PE executable. (Default: The name of the input file with patch prefix.)\n\n", szMainFile);
+				//PRINT_INFO("Usage: %s [/verbose:<level>] [/maxdatasize:<bytes>] [/maxcodesize:<bytes>] [/disabledep] [/disableaslr] [/forceguardcf] [/noentrypoint] [/hookexports] [/hookimports] [/hookall] [/hooksize:<bytes>] [/input:<file>] [/payload:<file>] [/savepayload] [/outputpayload:<file>] [/output:<file>]\n\n    /verbose:<level> - Verbosity level.\n    /maxdatasize - Maximum `.rxdata` size. (Default: 4096)\n    /maxcodesize - Maximum `.rxtext` size. (Default: 4096)\n    /disabledep - Disables DEP.\n    /disableaslr - Disables ASLR.\n    /forceguardcf - Force processing for GuardCF protected executable.\n    /noentrypoint - No entry point.\n    /hookexports - Hook exported functions in `.rxhooks` section.\n    /hookimports - Hook imported function in `.rxhooks` section.\n    /hookall - Hook exported and imported functions in `.rxhooks` section.\n    /hooksize:<bytes> - Hook size for one function. (Default: 16)\n    /input:<file> - Input PE executable.\n    /payload:<file> - Input binary (.bin) or assembly file (.asm). (Default: null)\n    /savepayload - Save payload to binary file.\n    /outputpayload - Output payload binary. (Default: The name of the output file with `.bin` extension.)\n    /output:<file> - Output PE executable. (Default: The name of the input file with patch prefix.)\n\n", szMainFile);
+				PRINT_INFO("Usage: %s [/verbose:<level>] [/maxdatasize:<bytes>] [/maxcodesize:<bytes>] [/disabledep] [/disableaslr] [/forceguardcf] [/noentrypoint] [/hookexports] [/hooksize:<bytes>] [/input:<file>] [/payload:<file>] [/savepayload] [/outputpayload:<file>] [/output:<file>]\n\n    /verbose:<level> - Verbosity level.\n    /maxdatasize - Maximum `.rxdata` size. (Default: 4096)\n    /maxcodesize - Maximum `.rxtext` size. (Default: 4096)\n    /disabledep - Disables DEP.\n    /disableaslr - Disables ASLR.\n    /forceguardcf - Force processing for GuardCF protected executable.\n    /noentrypoint - No entry point.\n    /hookexports - Hook exported functions in `.rxhooks` section.\n    /hookimports - Hook imported function in `.rxhooks` section.\n    /hookall - Hook exported and imported functions in `.rxhooks` section.\n    /hooksize:<bytes> - Hook size for one function. (Default: 16)\n    /input:<file> - Input PE executable.\n    /payload:<file> - Input binary (.bin) or assembly file (.asm). (Default: null)\n    /savepayload - Save payload to binary file.\n    /outputpayload - Output payload binary. (Default: The name of the output file with `.bin` extension.)\n    /output:<file> - Output PE executable. (Default: The name of the input file with patch prefix.)\n\n", szMainFile);
 				return 0;
 			}
 		}
@@ -700,6 +734,8 @@ int main(int argc, char* argv[], char* envp[]) {
 	bool bDisableASLR = false;
 	bool bForceGuardCF = false;
 	bool bNoEntryPoint = false;
+	//bool bHookImports = false;
+	bool bHookExports = false;
 
 	char szInputFile[1024];
 	memset(szInputFile, 0, sizeof(szInputFile));
@@ -761,6 +797,37 @@ int main(int argc, char* argv[], char* envp[]) {
 				PRINT_VERBOSE("No entry point mode.");
 			}
 			bNoEntryPoint = true;
+			continue;
+		}
+		if (!strncmp(szArg, "/hookexports", 12)) {
+			if (g_unVerboseLevel > 0) {
+				PRINT_VERBOSE("Export hook mode is activated.");
+			}
+			bHookExports = true;
+			continue;
+		}
+		/*
+		if (!strncmp(szArg, "/hookimports", 12)) {
+			if (g_unVerboseLevel > 0) {
+				PRINT_VERBOSE("Import hook mode is activated.");
+			}
+			bHookImports = true;
+			continue;
+		}
+		if (!strncmp(szArg, "/hookall", 8)) {
+			if (g_unVerboseLevel > 0) {
+				PRINT_VERBOSE("Import/Export hook mode is activated.");
+			}
+			bHookExports = true;
+			bHookImports = true;
+			continue;
+		}
+		*/
+		if (!strncmp(szArg, "/hooksize:", 10)) {
+			sscanf_s(szArg, "/hooksize:%lu", &g_unHookSize);
+			if (g_unVerboseLevel > 0) {
+				PRINT_VERBOSE("The size of one hook for a function is %lu bytes.", g_unHookSize);
+			}
 			continue;
 		}
 		if (!strncmp(szArg, "/input:", 7)) {
@@ -864,6 +931,11 @@ int main(int argc, char* argv[], char* envp[]) {
 
 	if (g_unCodeSectionSize < 0x1000) {
 		PRINT_ERROR("Minimum `.rxtext` size is 4096.");
+		return -1;
+	}
+
+	if (g_unHookSize < 0x10) {
+		PRINT_ERROR("Minimum hook size is 16.");
 		return -1;
 	}
 
@@ -988,6 +1060,9 @@ int main(int argc, char* argv[], char* envp[]) {
 			return -1;
 		}
 
+		std::vector<std::tuple<PDWORD, PWORD, char*>> vecExports = GetExports32(pSrcMap);
+		//std::vector<std::tuple<PIMAGE_IMPORT_DESCRIPTOR, PIMAGE_THUNK_DATA32, PIMAGE_THUNK_DATA32, char*, DWORD, PDWORD, PWORD, char*>> vecImports = GetImports32(pSrcMap);
+
 		PRINT_INFO("Working with Target...");
 
 		PIMAGE_SECTION_HEADER pSrcFirstSection = reinterpret_cast<PIMAGE_SECTION_HEADER>(reinterpret_cast<char*>(pSrcFH) + sizeof(IMAGE_FILE_HEADER) + pSrcFH->SizeOfOptionalHeader);
@@ -997,7 +1072,50 @@ int main(int argc, char* argv[], char* envp[]) {
 			unAdditionalSize += P2ALIGNUP(pSrcFirstSection[i].PointerToRawData + sizeof(IMAGE_SECTION_HEADER), pSrcOH->FileAlignment) - pSrcFirstSection[i].PointerToRawData;
 		}
 
-		DWORD unNewFileSize = P2ALIGNUP(unFileSize + unAdditionalSize + sizeof(IMAGE_SECTION_HEADER) * 2 + g_unDataSectionSize + g_unCodeSectionSize, pSrcOH->FileAlignment);
+		//char* pSrcExportSection = nullptr;
+		//DWORD unSrcExportHookSectionSise = 0;
+		//char* pSrcImportSection = nullptr;
+		//DWORD unSrcImportHookSectionSise = 0;
+
+		/*
+		if (bHookExports) {
+			IMAGE_DATA_DIRECTORY ExportDD = pSrcOH->DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
+			for (DWORD i = 0; i < pSrcFH->NumberOfSections; ++i) {
+				if ((ExportDD.VirtualAddress >= pSrcFirstSection[i].VirtualAddress) && (ExportDD.VirtualAddress < (pSrcFirstSection[i].VirtualAddress + pSrcFirstSection[i].Misc.VirtualSize))) {
+					char* pRawOffset = reinterpret_cast<char*>(pSrcMap) + pSrcFirstSection[i].PointerToRawData;
+					pSrcExportSection = reinterpret_cast<char*>(pRawOffset + (ExportDD.VirtualAddress - pSrcFirstSection[i].VirtualAddress));
+					unSrcExportHookSectionSise = ExportDD.Size;
+				}
+			}
+		}
+		*/
+
+		/*
+		if (bHookImports) {
+			IMAGE_DATA_DIRECTORY ImportDD = pSrcOH->DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+			for (DWORD i = 0; i < pSrcFH->NumberOfSections; ++i) {
+				if ((ImportDD.VirtualAddress >= pSrcFirstSection[i].VirtualAddress) && (ImportDD.VirtualAddress < (pSrcFirstSection[i].VirtualAddress + pSrcFirstSection[i].Misc.VirtualSize))) {
+					char* pRawOffset = reinterpret_cast<char*>(pSrcMap) + pSrcFirstSection[i].PointerToRawData;
+					pSrcImportSection = reinterpret_cast<char*>(pRawOffset + (ImportDD.VirtualAddress - pSrcFirstSection[i].VirtualAddress));
+					unSrcImportHookSectionSise = ImportDD.Size;
+				}
+			}
+		}
+		*/
+
+		DWORD unNewFileSize = 0;
+		if (bHookExports /*|| bHookImports*/) {
+			//if (bHookImports) {
+			//	unNewFileSize = P2ALIGNUP(unFileSize + unAdditionalSize + sizeof(IMAGE_SECTION_HEADER) * 4 + unSrcImportHookSectionSise + unSrcExportHookSectionSise + g_unDataSectionSize + g_unCodeSectionSize, pSrcOH->FileAlignment);
+			//}
+			//else {
+			//	unNewFileSize = P2ALIGNUP(unFileSize + unAdditionalSize + sizeof(IMAGE_SECTION_HEADER) * 3 + unSrcExportHookSectionSise + g_unDataSectionSize + g_unCodeSectionSize, pSrcOH->FileAlignment);
+				unNewFileSize = P2ALIGNUP(unFileSize + unAdditionalSize + sizeof(IMAGE_SECTION_HEADER) * 3 + g_unHookSize * vecExports.size() + g_unHookSize * vecExports.size() + g_unDataSectionSize + g_unCodeSectionSize, pSrcOH->FileAlignment);
+			//}
+		}
+		else {
+			unNewFileSize = P2ALIGNUP(unFileSize + unAdditionalSize + sizeof(IMAGE_SECTION_HEADER) * 2 + g_unDataSectionSize + g_unCodeSectionSize, pSrcOH->FileAlignment);
+		}
 		PRINT_POSITIVE("TargetSize: %lu bytes.", unNewFileSize);
 
 		std::tuple<HANDLE, HANDLE, LPVOID> dst = MapNewFile(szOutputFile, unNewFileSize);
@@ -1036,8 +1154,123 @@ int main(int argc, char* argv[], char* envp[]) {
 			PRINT_VERBOSE("Copying data from Source to Target...")
 		}
 		memcpy(std::get<2>(dst), std::get<2>(src), unFileSize);
+
 		if (g_unVerboseLevel >= 1) {
 			PRINT_VERBOSE("Appending sectors...")
+		}
+
+		/*
+		if (bHookImports) {
+			std::tuple<LPVOID, DWORD, DWORD, DWORD, DWORD> idatasect = AppendNewSection32(pDstMap, unNewFileSize, ".rxidata", unSrcImportHookSectionSise, IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ);
+			LPVOID idatasect_ptr = std::get<0>(idatasect);
+			DWORD idatasect_virtualaddress = std::get<1>(idatasect);
+			DWORD idatasect_virtualsize = std::get<2>(idatasect);
+			DWORD idatasect_rawaddress = std::get<3>(idatasect);
+			DWORD idatasect_rawsize = std::get<4>(idatasect);
+
+			PRINT_POSITIVE("Section `.rxidata` has been added.");
+			PRINT_INFO("ImageAddress:   0x%08X", pDstOH->ImageBase + idatasect_virtualaddress);
+			PRINT_INFO("VirtualAddress: 0x%08X", idatasect_virtualaddress);
+			PRINT_INFO("VirtualSize:    0x%08X", idatasect_virtualsize);
+			PRINT_INFO("RawAddress:     0x%08X", idatasect_rawaddress);
+			PRINT_INFO("RawSize:        0x%08X", idatasect_rawsize);
+
+			memset(idatasect_ptr, 0x00, idatasect_rawsize);
+
+			PIMAGE_SECTION_HEADER pDstFirstSection = reinterpret_cast<PIMAGE_SECTION_HEADER>(reinterpret_cast<char*>(pSrcFH) + sizeof(IMAGE_FILE_HEADER) + pSrcFH->SizeOfOptionalHeader);
+
+			char* pDstImportSection = nullptr;
+			DWORD unDstImportHookSectionSise = 0;
+
+			IMAGE_DATA_DIRECTORY ImportDD = pDstOH->DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+			for (DWORD i = 0; i < pSrcFH->NumberOfSections; ++i) {
+				if ((ImportDD.VirtualAddress >= pSrcFirstSection[i].VirtualAddress) && (ImportDD.VirtualAddress < (pDstFirstSection[i].VirtualAddress + pSrcFirstSection[i].Misc.VirtualSize))) {
+					char* pRawOffset = reinterpret_cast<char*>(pDstMap) + pDstFirstSection[i].PointerToRawData;
+					pDstImportSection = reinterpret_cast<char*>(pRawOffset + (ImportDD.VirtualAddress - pDstFirstSection[i].VirtualAddress));
+					unDstImportHookSectionSise = ImportDD.Size;
+				}
+			}
+
+			memmove(idatasect_ptr, pDstImportSection, unDstImportHookSectionSise); // Move .idata
+			memset(pDstImportSection, 0, unDstImportHookSectionSise); // Erase .idata
+			pDstOH->DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress = idatasect_virtualaddress; // Change .idata
+
+			// Cloning
+			std::tuple<PIMAGE_IMPORT_DESCRIPTOR, PIMAGE_THUNK_DATA32, PIMAGE_THUNK_DATA32, char*, DWORD, PDWORD, PWORD, char*> dataBegin = vecImports.front();
+			std::tuple<PIMAGE_IMPORT_DESCRIPTOR, PIMAGE_THUNK_DATA32, PIMAGE_THUNK_DATA32, char*, DWORD, PDWORD, PWORD, char*> dataEnd = vecImports.back();
+
+			PIMAGE_THUNK_DATA32 pBeginThunkDataImportNameTable = reinterpret_cast<PIMAGE_THUNK_DATA32>(std::get<1>(dataBegin));
+			PIMAGE_THUNK_DATA32 pEndThunkDataImportNameTable = reinterpret_cast<PIMAGE_THUNK_DATA32>(std::get<1>(dataEnd));
+			PIMAGE_THUNK_DATA32 pBeginThunkDataImportAddressTable = reinterpret_cast<PIMAGE_THUNK_DATA32>(std::get<2>(dataBegin));
+			PIMAGE_THUNK_DATA32 pEndThunkDataImportAddressTable = reinterpret_cast<PIMAGE_THUNK_DATA32>(std::get<2>(dataEnd));
+
+			DWORD unSizeImportNameTable = reinterpret_cast<DWORD>(pEndThunkDataImportNameTable) - reinterpret_cast<DWORD>(pBeginThunkDataImportNameTable);
+			DWORD unSizeImportAddressTable = reinterpret_cast<DWORD>(pEndThunkDataImportAddressTable) - reinterpret_cast<DWORD>(pBeginThunkDataImportAddressTable);
+
+			memcpy(reinterpret_cast<char*>(idatasect_ptr) + unSrcImportHookSectionSise, pBeginThunkDataImportNameTable, unSizeImportNameTable);
+			memcpy(reinterpret_cast<char*>(idatasect_ptr) + unSrcImportHookSectionSise + unSizeImportNameTable, pBeginThunkDataImportAddressTable, unSizeImportAddressTable);
+
+			std::vector<std::tuple<PIMAGE_IMPORT_DESCRIPTOR, PIMAGE_THUNK_DATA32, PIMAGE_THUNK_DATA32, char*, DWORD, PDWORD, PWORD, char*>> vecDstImports = GetImports32(pDstMap);
+
+			if (vecDstImports.size() != vecImports.size()) {
+				PRINT_ERROR("The sizes of the import tables do not match! (%lu != %lu)", vecDstImports.size(), vecImports.size());
+				return -1;
+			}
+
+			std::vector<std::tuple<PIMAGE_IMPORT_DESCRIPTOR, PIMAGE_THUNK_DATA32, PIMAGE_THUNK_DATA32, char*, DWORD, PDWORD, PWORD, char*>>::iterator srcIT = vecImports.begin();
+			for (std::vector<std::tuple<PIMAGE_IMPORT_DESCRIPTOR, PIMAGE_THUNK_DATA32, PIMAGE_THUNK_DATA32, char*, DWORD, PDWORD, PWORD, char*>>::iterator dstIT = vecDstImports.begin(); dstIT != vecDstImports.end(); ++dstIT, ++srcIT) {
+				std::tuple<PIMAGE_IMPORT_DESCRIPTOR, PIMAGE_THUNK_DATA32, PIMAGE_THUNK_DATA32, char*, DWORD, PDWORD, PWORD, char*> srcData = (*srcIT);
+				std::tuple<PIMAGE_IMPORT_DESCRIPTOR, PIMAGE_THUNK_DATA32, PIMAGE_THUNK_DATA32, char*, DWORD, PDWORD, PWORD, char*> dstData = (*dstIT);
+			}
+		}
+		*/
+
+		if (bHookExports /*|| bHookImports*/) {
+
+			DWORD unHooksSize = 0;
+			if (bHookExports) {
+				unHooksSize += g_unHookSize * vecExports.size() + g_unHookSize * vecExports.size();
+			}
+			//if (bHookImports) {
+			//	unHooksSize += g_unHookSize * vecImports.size();
+			//}
+
+			std::tuple<LPVOID, DWORD, DWORD, DWORD, DWORD> hookssect = AppendNewSection32(pDstMap, unNewFileSize, ".rxhooks", unHooksSize, IMAGE_SCN_CNT_CODE | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_READ);
+			LPVOID hookssect_ptr = std::get<0>(hookssect);
+			DWORD hookssect_virtualaddress = std::get<1>(hookssect);
+			DWORD hookssect_virtualsize = std::get<2>(hookssect);
+			DWORD hookssect_rawaddress = std::get<3>(hookssect);
+			DWORD hookssect_rawsize = std::get<4>(hookssect);
+
+			PRINT_POSITIVE("Section `.rxhooks` has been added.");
+			PRINT_INFO("ImageAddress:   0x%08X", pDstOH->ImageBase + hookssect_virtualaddress);
+			PRINT_INFO("VirtualAddress: 0x%08X", hookssect_virtualaddress);
+			PRINT_INFO("VirtualSize:    0x%08X", hookssect_virtualsize);
+			PRINT_INFO("RawAddress:     0x%08X", hookssect_rawaddress);
+			PRINT_INFO("RawSize:        0x%08X", hookssect_rawsize);
+
+			memset(hookssect_ptr, 0xC3 /* INT3s... */, hookssect_rawsize);
+
+			DWORD unHookCount = 0;
+			std::vector<std::tuple<PDWORD, PWORD, char*>> vecDstExports = GetExports32(pDstMap);
+			for (std::vector<std::tuple<PDWORD, PWORD, char*>>::iterator it = vecDstExports.begin(); it != vecDstExports.end(); ++it, ++unHookCount) {
+				PDWORD pFunctionRVA = std::get<0>(*it);
+				char* pHookBegin = reinterpret_cast<char*>(hookssect_ptr) + g_unHookSize * unHookCount;
+				char* pHookEnd = pHookBegin + g_unHookSize;
+				memset(pHookBegin, 0x90, g_unHookSize);
+
+				DWORD unHookEndRVA = reinterpret_cast<DWORD>(pHookEnd - reinterpret_cast<DWORD>(hookssect_ptr));
+
+				unsigned char jmpcode[5];
+				memset(jmpcode, 0, sizeof(jmpcode));
+				jmpcode[0] = 0xE9;
+				*reinterpret_cast<DWORD*>(jmpcode + 1) = (*(pFunctionRVA)) - ((unHookEndRVA + hookssect_virtualaddress) - sizeof(jmpcode)) - 5;
+				memcpy(pHookEnd - sizeof(jmpcode), jmpcode, sizeof(jmpcode));
+
+				(*(pFunctionRVA)) = hookssect_virtualaddress + g_unHookSize * unHookCount;
+
+				PRINT_POSITIVE("Hooked `%s`.", std::get<2>(*it));
+			}
 		}
 
 		std::tuple<LPVOID, DWORD, DWORD, DWORD, DWORD> datasect = AppendNewSection32(pDstMap, unNewFileSize, ".rxdata", g_unDataSectionSize, IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE);
@@ -1171,6 +1404,9 @@ int main(int argc, char* argv[], char* envp[]) {
 	else if (pSrcFH->Machine == IMAGE_FILE_MACHINE_AMD64) {
 		PRINT_INFO("Detected 64BIT machine.");
 
+		std::vector<std::tuple<PDWORD, PWORD, char*>> vecExports = GetExports64(pSrcMap);
+		//std::vector<std::tuple<PIMAGE_IMPORT_DESCRIPTOR, PIMAGE_THUNK_DATA64, PIMAGE_THUNK_DATA64, char*, DWORD, PULONGLONG, PULONGLONG, char*>> vecImports = GetImports64(pSrcMap);
+
 		PIMAGE_OPTIONAL_HEADER64 pSrcOH = reinterpret_cast<PIMAGE_OPTIONAL_HEADER64>(&(pSrcNTHs->OptionalHeader));
 		if (pSrcOH->Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC) {
 			PRINT_ERROR("Invalid optional PE signature.");
@@ -1232,6 +1468,54 @@ int main(int argc, char* argv[], char* envp[]) {
 		memcpy(std::get<2>(dst), std::get<2>(src), unFileSize);
 		if (g_unVerboseLevel >= 1) {
 			PRINT_VERBOSE("Appending sectors...")
+		}
+
+		if (bHookExports /*|| bHookImports*/) {
+
+			DWORD unHooksSize = 0;
+			if (bHookExports) {
+				unHooksSize += g_unHookSize * vecExports.size() + g_unHookSize * vecExports.size();
+			}
+			//if (bHookImports) {
+			//	unHooksSize += g_unHookSize * vecImports.size();
+			//}
+
+			std::tuple<LPVOID, DWORD, DWORD, DWORD, DWORD> hookssect = AppendNewSection64(pDstMap, unNewFileSize, ".rxhooks", unHooksSize, IMAGE_SCN_CNT_CODE | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_READ);
+			LPVOID hookssect_ptr = std::get<0>(hookssect);
+			DWORD hookssect_virtualaddress = std::get<1>(hookssect);
+			DWORD hookssect_virtualsize = std::get<2>(hookssect);
+			DWORD hookssect_rawaddress = std::get<3>(hookssect);
+			DWORD hookssect_rawsize = std::get<4>(hookssect);
+
+			PRINT_POSITIVE("Section `.rxhooks` has been added.");
+			PRINT_INFO("ImageAddress:   0x%08X", pDstOH->ImageBase + hookssect_virtualaddress);
+			PRINT_INFO("VirtualAddress: 0x%08X", hookssect_virtualaddress);
+			PRINT_INFO("VirtualSize:    0x%08X", hookssect_virtualsize);
+			PRINT_INFO("RawAddress:     0x%08X", hookssect_rawaddress);
+			PRINT_INFO("RawSize:        0x%08X", hookssect_rawsize);
+
+			memset(hookssect_ptr, 0xC3 /* INT3s... */, hookssect_rawsize);
+
+			DWORD unHookCount = 0;
+			std::vector<std::tuple<PDWORD, PWORD, char*>> vecDstExports = GetExports64(pDstMap);
+			for (std::vector<std::tuple<PDWORD, PWORD, char*>>::iterator it = vecDstExports.begin(); it != vecDstExports.end(); ++it, ++unHookCount) {
+				PDWORD pFunctionRVA = std::get<0>(*it);
+				char* pHookBegin = reinterpret_cast<char*>(hookssect_ptr) + g_unHookSize * unHookCount;
+				char* pHookEnd = pHookBegin + g_unHookSize;
+				memset(pHookBegin, 0x90, g_unHookSize);
+
+				DWORD unHookEndRVA = reinterpret_cast<DWORD>(pHookEnd - reinterpret_cast<ULONGLONG>(hookssect_ptr));
+
+				unsigned char jmpcode[5];
+				memset(jmpcode, 0, sizeof(jmpcode));
+				jmpcode[0] = 0xE9;
+				*reinterpret_cast<DWORD*>(jmpcode + 1) = (*(pFunctionRVA)) - ((unHookEndRVA + hookssect_virtualaddress) - sizeof(jmpcode)) - 5;
+				memcpy(pHookEnd - sizeof(jmpcode), jmpcode, sizeof(jmpcode));
+
+				(*(pFunctionRVA)) = hookssect_virtualaddress + g_unHookSize * unHookCount;
+
+				PRINT_POSITIVE("Hooked `%s`.", std::get<2>(*it));
+			}
 		}
 
 		std::tuple<LPVOID, DWORD, DWORD, DWORD, DWORD> datasect = AppendNewSection64(pDstMap, unNewFileSize, ".rxdata", g_unDataSectionSize, IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE);
