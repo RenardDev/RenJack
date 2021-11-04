@@ -37,6 +37,7 @@
 DWORD g_unDataSectionSize = 0x1000;
 DWORD g_unCodeSectionSize = 0x1000;
 DWORD g_unHookSize = 0x10;
+DWORD g_unHookAlignSize = 4;
 DWORD g_unVerboseLevel = 0;
 
 std::tuple<HANDLE, HANDLE, LPVOID> MapFile(const char* fpath) {
@@ -166,6 +167,7 @@ static inline DWORD P2ALIGNUP(DWORD unSize, DWORD unAlignment) {
 	}
 };
 #endif
+#define ISP2VALUE(x) (x && (!(x & (x - 1))))
 
 std::tuple<LPVOID, DWORD, DWORD, DWORD, DWORD> AppendNewSection32(LPVOID pMap, DWORD unFileSize, LPCSTR szName, DWORD unVirtualSize, DWORD unCharacteristics) {
 	PIMAGE_DOS_HEADER pDH = reinterpret_cast<PIMAGE_DOS_HEADER>(pMap);
@@ -715,16 +717,16 @@ int main(int argc, char* argv[], char* envp[]) {
 	}
 
 	if (argc < 2) {
-		//PRINT_WARNING("Usage: %s [/verbose:<level>] [/maxdatasize:<bytes>] [/maxcodesize:<bytes>] [/disabledep] [/disableaslr] [/forceguardcf] [/noentrypoint] [/hookexports] [/hookimports] [/hookall] [/hooksize:<bytes>] [/input:<file>] [/payload:<file>] [/savepayload] [/outputpayload:<file>] [/output:<file>]\n", szMainFile);
-		PRINT_WARNING("Usage: %s [/verbose:<level>] [/maxdatasize:<bytes>] [/maxcodesize:<bytes>] [/disabledep] [/disableaslr] [/forceguardcf] [/noentrypoint] [/hookexports] [/hooksize:<bytes>] [/input:<file>] [/payload:<file>] [/savepayload] [/outputpayload:<file>] [/output:<file>]\n", szMainFile);
+		//PRINT_WARNING("Usage: %s [/verbose:<level>] [/maxdatasize:<bytes>] [/maxcodesize:<bytes>] [/disabledep] [/disableaslr] [/forceguardcf] [/noentrypoint] [/hookexports] [/hookimports] [/hookall] [/hooksize:<bytes>] [/hookalign:<bytes>] [/input:<file>] [/payload:<file>] [/savepayload] [/outputpayload:<file>] [/output:<file>]\n", szMainFile);
+		PRINT_WARNING("Usage: %s [/verbose:<level>] [/maxdatasize:<bytes>] [/maxcodesize:<bytes>] [/disabledep] [/disableaslr] [/forceguardcf] [/noentrypoint] [/hookexports] [/hooksize:<bytes>] [/hookalign:<bytes>] [/input:<file>] [/payload:<file>] [/savepayload] [/outputpayload:<file>] [/output:<file>]\n", szMainFile);
 		return -1;
 	}
 	else {
 		for (int i = 0; i < argc; ++i) {
 			const char* arg = argv[i];
 			if (!strncmp(arg, "/help", 5) || !strncmp(arg, "/?", 2)) {
-				//PRINT_INFO("Usage: %s [/verbose:<level>] [/maxdatasize:<bytes>] [/maxcodesize:<bytes>] [/disabledep] [/disableaslr] [/forceguardcf] [/noentrypoint] [/hookexports] [/hookimports] [/hookall] [/hooksize:<bytes>] [/input:<file>] [/payload:<file>] [/savepayload] [/outputpayload:<file>] [/output:<file>]\n\n    /verbose:<level> - Verbosity level.\n    /maxdatasize - Maximum `.rxdata` size. (Default: 4096)\n    /maxcodesize - Maximum `.rxtext` size. (Default: 4096)\n    /disabledep - Disables DEP.\n    /disableaslr - Disables ASLR.\n    /forceguardcf - Force processing for GuardCF protected executable.\n    /noentrypoint - No entry point.\n    /hookexports - Hook exported functions in `.rxhooks` section.\n    /hookimports - Hook imported function in `.rxhooks` section.\n    /hookall - Hook exported and imported functions in `.rxhooks` section.\n    /hooksize:<bytes> - Hook size for one function. (Default: 16)\n    /input:<file> - Input PE executable.\n    /payload:<file> - Input binary (.bin) or assembly file (.asm). (Default: null)\n    /savepayload - Save payload to binary file.\n    /outputpayload - Output payload binary. (Default: The name of the output file with `.bin` extension.)\n    /output:<file> - Output PE executable. (Default: The name of the input file with patch prefix.)\n\n", szMainFile);
-				PRINT_INFO("Usage: %s [/verbose:<level>] [/maxdatasize:<bytes>] [/maxcodesize:<bytes>] [/disabledep] [/disableaslr] [/forceguardcf] [/noentrypoint] [/hookexports] [/hooksize:<bytes>] [/input:<file>] [/payload:<file>] [/savepayload] [/outputpayload:<file>] [/output:<file>]\n\n    /verbose:<level> - Verbosity level.\n    /maxdatasize - Maximum `.rxdata` size. (Default: 4096)\n    /maxcodesize - Maximum `.rxtext` size. (Default: 4096)\n    /disabledep - Disables DEP.\n    /disableaslr - Disables ASLR.\n    /forceguardcf - Force processing for GuardCF protected executable.\n    /noentrypoint - No entry point.\n    /hookexports - Hook exported functions in `.rxhooks` section.\n    /hooksize:<bytes> - Hook size for one function. (Default: 16)\n    /input:<file> - Input PE executable.\n    /payload:<file> - Input binary (.bin) or assembly file (.asm). (Default: null)\n    /savepayload - Save payload to binary file.\n    /outputpayload - Output payload binary. (Default: The name of the output file with `.bin` extension.)\n    /output:<file> - Output PE executable. (Default: The name of the input file with patch prefix.)\n\n", szMainFile);
+				//PRINT_INFO("Usage: %s [/verbose:<level>] [/maxdatasize:<bytes>] [/maxcodesize:<bytes>] [/disabledep] [/disableaslr] [/forceguardcf] [/noentrypoint] [/hookexports] [/hookimports] [/hookall] [/hooksize:<bytes>] [/hookalign:<bytes>] [/input:<file>] [/payload:<file>] [/savepayload] [/outputpayload:<file>] [/output:<file>]\n\n    /verbose:<level> - Verbosity level.\n    /maxdatasize - Maximum `.rxdata` size. (Default: 4096)\n    /maxcodesize - Maximum `.rxtext` size. (Default: 4096)\n    /disabledep - Disables DEP.\n    /disableaslr - Disables ASLR.\n    /forceguardcf - Force processing for GuardCF protected executable.\n    /noentrypoint - No entry point.\n    /hookexports - Hook exported functions in `.rxhooks` section.\n    /hookimports - Hook imported function in `.rxhooks` section.\n    /hookall - Hook exported and imported functions in `.rxhooks` section.\n    /hooksize:<bytes> - Hook size for one function. (Default: 16)\n    /input:<file> - Input PE executable.\n    /payload:<file> - Input binary (.bin) or assembly file (.asm). (Default: null)\n    /savepayload - Save payload to binary file.\n    /outputpayload - Output payload binary. (Default: The name of the output file with `.bin` extension.)\n    /output:<file> - Output PE executable. (Default: The name of the input file with patch prefix.)\n\n", szMainFile);
+				PRINT_INFO("Usage: %s [/verbose:<level>] [/maxdatasize:<bytes>] [/maxcodesize:<bytes>] [/disabledep] [/disableaslr] [/forceguardcf] [/noentrypoint] [/hookexports] [/hooksize:<bytes>] [/hookalign:<bytes>] [/input:<file>] [/payload:<file>] [/savepayload] [/outputpayload:<file>] [/output:<file>]\n\n    /verbose:<level> - Verbosity level.\n    /maxdatasize:<bytes> - Maximum `.rxdata` size. (Default: 4096)\n    /maxcodesize:<bytes> - Maximum `.rxtext` size. (Default: 4096)\n    /disabledep - Disables DEP.\n    /disableaslr - Disables ASLR.\n    /forceguardcf - Force processing for GuardCF protected executable.\n    /noentrypoint - No entry point.\n    /hookexports - Hook exported functions in `.rxhooks` section.\n    /hooksize:<bytes> - Hook size for one function. (Default: 16)\n    /hookalign:<bytes> - Hook alignment size. (Default: 4)\n    /input:<file> - Input PE executable.\n    /payload:<file> - Input binary (.bin) or assembly file (.asm). (Default: null)\n    /savepayload - Save payload to binary file.\n    /outputpayload - Output payload binary. (Default: The name of the output file with `.bin` extension.)\n    /output:<file> - Output PE executable. (Default: The name of the input file with patch prefix.)\n\n", szMainFile);
 				return 0;
 			}
 		}
@@ -827,6 +829,13 @@ int main(int argc, char* argv[], char* envp[]) {
 			sscanf_s(szArg, "/hooksize:%lu", &g_unHookSize);
 			if (g_unVerboseLevel > 0) {
 				PRINT_VERBOSE("The size of one hook for a function is %lu bytes.", g_unHookSize);
+			}
+			continue;
+		}
+		if (!strncmp(szArg, "/hookalign:", 11)) {
+			sscanf_s(szArg, "/hookalign:%lu", &g_unHookAlignSize);
+			if (g_unVerboseLevel > 0) {
+				PRINT_VERBOSE("The size of one hook alignment for a function is %lu bytes.", g_unHookAlignSize);
 			}
 			continue;
 		}
@@ -938,6 +947,22 @@ int main(int argc, char* argv[], char* envp[]) {
 		PRINT_ERROR("Minimum hook size is 16.");
 		return -1;
 	}
+
+	if (g_unHookAlignSize < 4) {
+		PRINT_ERROR("Minimum hook alignment size is 4.");
+		return -1;
+	}
+
+	if (g_unHookAlignSize > 16) {
+		PRINT_ERROR("Maximum hook alignment size is 16.");
+		return -1;
+	}
+	
+	if (!ISP2VALUE(g_unHookAlignSize)) {
+		PRINT_ERROR("The hook alignment number must be a power of two.");
+		return -1;
+	}
+
 
 	if (!strnlen_s(szInputFile, sizeof(szInputFile))) {
 		PRINT_ERROR("Input file is empty.");
@@ -1110,7 +1135,7 @@ int main(int argc, char* argv[], char* envp[]) {
 			//}
 			//else {
 			//	unNewFileSize = P2ALIGNUP(unFileSize + unAdditionalSize + sizeof(IMAGE_SECTION_HEADER) * 3 + unSrcExportHookSectionSise + g_unDataSectionSize + g_unCodeSectionSize, pSrcOH->FileAlignment);
-				unNewFileSize = P2ALIGNUP(unFileSize + unAdditionalSize + sizeof(IMAGE_SECTION_HEADER) * 3 + g_unHookSize * vecExports.size() + g_unHookSize * vecExports.size() + g_unDataSectionSize + g_unCodeSectionSize, pSrcOH->FileAlignment);
+				unNewFileSize = P2ALIGNUP(unFileSize + unAdditionalSize + sizeof(IMAGE_SECTION_HEADER) * 3 + g_unHookSize * vecExports.size() + g_unHookAlignSize * vecExports.size() + g_unDataSectionSize + g_unCodeSectionSize, pSrcOH->FileAlignment);
 			//}
 		}
 		else {
@@ -1229,7 +1254,7 @@ int main(int argc, char* argv[], char* envp[]) {
 
 			DWORD unHooksSize = 0;
 			if (bHookExports) {
-				unHooksSize += g_unHookSize * vecExports.size() + g_unHookSize * vecExports.size();
+				unHooksSize += g_unHookSize * vecExports.size() + g_unHookAlignSize * vecExports.size();
 			}
 			//if (bHookImports) {
 			//	unHooksSize += g_unHookSize * vecImports.size();
@@ -1255,7 +1280,7 @@ int main(int argc, char* argv[], char* envp[]) {
 			std::vector<std::tuple<PDWORD, PWORD, char*>> vecDstExports = GetExports32(pDstMap);
 			for (std::vector<std::tuple<PDWORD, PWORD, char*>>::iterator it = vecDstExports.begin(); it != vecDstExports.end(); ++it, ++unHookCount) {
 				PDWORD pFunctionRVA = std::get<0>(*it);
-				char* pHookBegin = reinterpret_cast<char*>(hookssect_ptr) + g_unHookSize * unHookCount;
+				char* pHookBegin = reinterpret_cast<char*>(hookssect_ptr) + g_unHookSize * unHookCount + g_unHookAlignSize * unHookCount;
 				char* pHookEnd = pHookBegin + g_unHookSize;
 				memset(pHookBegin, 0x90, g_unHookSize);
 
@@ -1267,7 +1292,7 @@ int main(int argc, char* argv[], char* envp[]) {
 				*reinterpret_cast<DWORD*>(jmpcode + 1) = (*(pFunctionRVA)) - ((unHookEndRVA + hookssect_virtualaddress) - sizeof(jmpcode)) - 5;
 				memcpy(pHookEnd - sizeof(jmpcode), jmpcode, sizeof(jmpcode));
 
-				(*(pFunctionRVA)) = hookssect_virtualaddress + g_unHookSize * unHookCount;
+				(*(pFunctionRVA)) = hookssect_virtualaddress + (reinterpret_cast<DWORD>(pHookBegin) - reinterpret_cast<DWORD>(hookssect_ptr));
 
 				PRINT_POSITIVE("Hooked `%s`.", std::get<2>(*it));
 			}
@@ -1474,7 +1499,7 @@ int main(int argc, char* argv[], char* envp[]) {
 
 			DWORD unHooksSize = 0;
 			if (bHookExports) {
-				unHooksSize += g_unHookSize * vecExports.size() + g_unHookSize * vecExports.size();
+				unHooksSize += g_unHookSize * vecExports.size() + g_unHookAlignSize * vecExports.size();
 			}
 			//if (bHookImports) {
 			//	unHooksSize += g_unHookSize * vecImports.size();
@@ -1497,14 +1522,14 @@ int main(int argc, char* argv[], char* envp[]) {
 			memset(hookssect_ptr, 0xC3 /* INT3s... */, hookssect_rawsize);
 
 			DWORD unHookCount = 0;
-			std::vector<std::tuple<PDWORD, PWORD, char*>> vecDstExports = GetExports64(pDstMap);
+			std::vector<std::tuple<PDWORD, PWORD, char*>> vecDstExports = GetExports32(pDstMap);
 			for (std::vector<std::tuple<PDWORD, PWORD, char*>>::iterator it = vecDstExports.begin(); it != vecDstExports.end(); ++it, ++unHookCount) {
 				PDWORD pFunctionRVA = std::get<0>(*it);
-				char* pHookBegin = reinterpret_cast<char*>(hookssect_ptr) + g_unHookSize * unHookCount;
+				char* pHookBegin = reinterpret_cast<char*>(hookssect_ptr) + g_unHookSize * unHookCount + g_unHookAlignSize * unHookCount;
 				char* pHookEnd = pHookBegin + g_unHookSize;
 				memset(pHookBegin, 0x90, g_unHookSize);
 
-				DWORD unHookEndRVA = reinterpret_cast<DWORD>(pHookEnd - reinterpret_cast<ULONGLONG>(hookssect_ptr));
+				DWORD unHookEndRVA = reinterpret_cast<DWORD>(pHookEnd - reinterpret_cast<DWORD>(hookssect_ptr));
 
 				unsigned char jmpcode[5];
 				memset(jmpcode, 0, sizeof(jmpcode));
@@ -1512,7 +1537,7 @@ int main(int argc, char* argv[], char* envp[]) {
 				*reinterpret_cast<DWORD*>(jmpcode + 1) = (*(pFunctionRVA)) - ((unHookEndRVA + hookssect_virtualaddress) - sizeof(jmpcode)) - 5;
 				memcpy(pHookEnd - sizeof(jmpcode), jmpcode, sizeof(jmpcode));
 
-				(*(pFunctionRVA)) = hookssect_virtualaddress + g_unHookSize * unHookCount;
+				(*(pFunctionRVA)) = hookssect_virtualaddress + (reinterpret_cast<DWORD>(pHookBegin) - reinterpret_cast<DWORD>(hookssect_ptr));
 
 				PRINT_POSITIVE("Hooked `%s`.", std::get<2>(*it));
 			}
