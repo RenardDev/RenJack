@@ -306,7 +306,7 @@ std::vector<std::tuple<PDWORD, PWORD, char*>> GetExports32(LPVOID pMap, bool bFu
 
 			PDWORD pFunctions = reinterpret_cast<PDWORD>(reinterpret_cast<char*>(pMap) + pExportDirectory->AddressOfFunctions - unDelta);
 			PWORD pOrdinals = reinterpret_cast<PWORD>(reinterpret_cast<char*>(pMap) + pExportDirectory->AddressOfNameOrdinals - unDelta);
-			PCHAR* pNames = reinterpret_cast<PCHAR*>(reinterpret_cast<char*>(pMap) + pExportDirectory->AddressOfNames - unDelta);
+			PDWORD pNames = reinterpret_cast<PDWORD>(reinterpret_cast<char*>(pMap) + pExportDirectory->AddressOfNames - unDelta);
 
 			for (DWORD j = 0; j < pExportDirectory->NumberOfFunctions; ++j) {
 				for (DWORD l = 0; l < pExportDirectory->NumberOfNames; ++l) {
@@ -314,7 +314,7 @@ std::vector<std::tuple<PDWORD, PWORD, char*>> GetExports32(LPVOID pMap, bool bFu
 						//PRINT_INFO("Export: 0x%08X   `%s`", unFunction, reinterpret_cast<char*>(pMap) + reinterpret_cast<DWORD>(pNames[l]) - unDelta);
 						//std::tuple<DWORD, WORD, std::unique_ptr<char>>()
 						if (!bFunctionsOnly) {
-							vecData.push_back(std::tuple<PDWORD, PWORD, char*>(&(pFunctions[j]), &(pOrdinals[l]), reinterpret_cast<char*>(pMap) + reinterpret_cast<DWORD>(pNames[l]) - unDelta));
+							vecData.push_back(std::tuple<PDWORD, PWORD, char*>(&(pFunctions[j]), &(pOrdinals[l]), reinterpret_cast<char*>(pMap) + pNames[l] - unDelta));
 						}
 						else {
 							for (DWORD k = 0; k < pFH->NumberOfSections; ++k) {
@@ -323,7 +323,7 @@ std::vector<std::tuple<PDWORD, PWORD, char*>> GetExports32(LPVOID pMap, bool bFu
 
 								if ((reinterpret_cast<DWORD>(pFunction) >= reinterpret_cast<DWORD>(pRawOffset)) && (reinterpret_cast<DWORD>(pFunction) <= (reinterpret_cast<DWORD>(pRawOffset) + pFirstSection[k].SizeOfRawData))) {
 									if ((pFirstSection[k].Characteristics & (IMAGE_SCN_CNT_CODE | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_READ)) == pFirstSection[k].Characteristics) {
-										vecData.push_back(std::tuple<PDWORD, PWORD, char*>(&(pFunctions[j]), &(pOrdinals[l]), reinterpret_cast<char*>(pMap) + reinterpret_cast<DWORD>(pNames[l]) - unDelta));
+										vecData.push_back(std::tuple<PDWORD, PWORD, char*>(&(pFunctions[j]), &(pOrdinals[l]), reinterpret_cast<char*>(pMap) + pNames[l] - unDelta));
 									}
 								}
 							}
@@ -416,7 +416,7 @@ std::vector<std::tuple<PDWORD, PWORD, char*>> GetExports64(LPVOID pMap, bool bFu
 
 			PDWORD pFunctions = reinterpret_cast<PDWORD>(reinterpret_cast<char*>(pMap) + pExportDirectory->AddressOfFunctions - unDelta);
 			PWORD pOrdinals = reinterpret_cast<PWORD>(reinterpret_cast<char*>(pMap) + pExportDirectory->AddressOfNameOrdinals - unDelta);
-			PCHAR* pNames = reinterpret_cast<PCHAR*>(reinterpret_cast<char*>(pMap) + pExportDirectory->AddressOfNames - unDelta);
+			PDWORD pNames = reinterpret_cast<PDWORD>(reinterpret_cast<char*>(pMap) + pExportDirectory->AddressOfNames - unDelta);
 
 			for (DWORD j = 0; j < pExportDirectory->NumberOfFunctions; ++j) {
 				for (DWORD l = 0; l < pExportDirectory->NumberOfNames; ++l) {
@@ -424,7 +424,7 @@ std::vector<std::tuple<PDWORD, PWORD, char*>> GetExports64(LPVOID pMap, bool bFu
 						//PRINT_INFO("Export: 0x%08X   `%s`", &(pFunctions[j]), reinterpret_cast<char*>(pMap) + reinterpret_cast<DWORD>(pNames[l]) - unDelta);
 						//std::tuple<DWORD, WORD, std::unique_ptr<char>>()
 						if (!bFunctionsOnly) {
-							vecData.push_back(std::tuple<PDWORD, PWORD, char*>(&(pFunctions[j]), &(pOrdinals[l]), reinterpret_cast<char*>(pMap) + reinterpret_cast<DWORD>(pNames[l]) - unDelta));
+							vecData.push_back(std::tuple<PDWORD, PWORD, char*>(&(pFunctions[j]), &(pOrdinals[l]), reinterpret_cast<char*>(pMap) + pNames[l] - unDelta));
 						}
 						else {
 							for (DWORD k = 0; k < pFH->NumberOfSections; ++k) {
@@ -433,7 +433,7 @@ std::vector<std::tuple<PDWORD, PWORD, char*>> GetExports64(LPVOID pMap, bool bFu
 
 								if ((reinterpret_cast<DWORD>(pFunction) >= reinterpret_cast<DWORD>(pRawOffset)) && (reinterpret_cast<DWORD>(pFunction) <= (reinterpret_cast<DWORD>(pRawOffset) + pFirstSection[k].SizeOfRawData))) {
 									if ((pFirstSection[k].Characteristics & (IMAGE_SCN_CNT_CODE | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_READ)) == pFirstSection[k].Characteristics) {
-										vecData.push_back(std::tuple<PDWORD, PWORD, char*>(&(pFunctions[j]), &(pOrdinals[l]), reinterpret_cast<char*>(pMap) + reinterpret_cast<DWORD>(pNames[l]) - unDelta));
+										vecData.push_back(std::tuple<PDWORD, PWORD, char*>(&(pFunctions[j]), &(pOrdinals[l]), reinterpret_cast<char*>(pMap) + pNames[l] - unDelta));
 									}
 								}
 							}
@@ -697,7 +697,7 @@ std::vector<unsigned char> Assembly64(ULONGLONG nBaseAddress, PCHAR szAsm) {
 }
 
 int main(int argc, char* argv[], char* envp[]) {
-	clrprintf(ConsoleColor::White, "RenJack by Ren (zeze839@gmail.com) [Version 2.2]\n\n");
+	clrprintf(ConsoleColor::White, "RenJack by Ren (zeze839@gmail.com) [Version 2.2_1]\n\n");
 	
 	char szMainFileName[32];
 	memset(szMainFileName, 0, sizeof(szMainFileName));
