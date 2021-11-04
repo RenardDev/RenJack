@@ -322,7 +322,7 @@ std::vector<std::tuple<PDWORD, PWORD, char*>> GetExports32(LPVOID pMap, bool bFu
 								PDWORD pFunction = reinterpret_cast<PDWORD>(reinterpret_cast<char*>(pMap) + pFunctions[j]);
 
 								if ((reinterpret_cast<DWORD>(pFunction) >= reinterpret_cast<DWORD>(pRawOffset)) && (reinterpret_cast<DWORD>(pFunction) <= (reinterpret_cast<DWORD>(pRawOffset) + pFirstSection[k].SizeOfRawData))) {
-									if (pFirstSection[k].Characteristics & IMAGE_SCN_MEM_EXECUTE) {
+									if ((pFirstSection[k].Characteristics & (IMAGE_SCN_CNT_CODE | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_READ)) == pFirstSection[k].Characteristics) {
 										vecData.push_back(std::tuple<PDWORD, PWORD, char*>(&(pFunctions[j]), &(pOrdinals[l]), reinterpret_cast<char*>(pMap) + reinterpret_cast<DWORD>(pNames[l]) - unDelta));
 									}
 								}
@@ -432,7 +432,7 @@ std::vector<std::tuple<PDWORD, PWORD, char*>> GetExports64(LPVOID pMap, bool bFu
 								PDWORD pFunction = reinterpret_cast<PDWORD>(reinterpret_cast<char*>(pMap) + pFunctions[j]);
 
 								if ((reinterpret_cast<DWORD>(pFunction) >= reinterpret_cast<DWORD>(pRawOffset)) && (reinterpret_cast<DWORD>(pFunction) <= (reinterpret_cast<DWORD>(pRawOffset) + pFirstSection[k].SizeOfRawData))) {
-									if (pFirstSection[k].Characteristics & IMAGE_SCN_MEM_EXECUTE) {
+									if ((pFirstSection[k].Characteristics & (IMAGE_SCN_CNT_CODE | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_READ)) == pFirstSection[k].Characteristics) {
 										vecData.push_back(std::tuple<PDWORD, PWORD, char*>(&(pFunctions[j]), &(pOrdinals[l]), reinterpret_cast<char*>(pMap) + reinterpret_cast<DWORD>(pNames[l]) - unDelta));
 									}
 								}
@@ -1260,6 +1260,11 @@ int main(int argc, char* argv[], char* envp[]) {
 			//	unHooksSize += g_unHookSize * vecImports.size();
 			//}
 
+			if (!unHooksSize) {
+				PRINT_ERROR("Nothing to hook! (Do not use /hookexports)");
+				return -1;
+			}
+
 			std::tuple<LPVOID, DWORD, DWORD, DWORD, DWORD> hookssect = AppendNewSection32(pDstMap, unNewFileSize, ".rxhooks", unHooksSize, IMAGE_SCN_CNT_CODE | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_READ);
 			LPVOID hookssect_ptr = std::get<0>(hookssect);
 			DWORD hookssect_virtualaddress = std::get<1>(hookssect);
@@ -1505,6 +1510,11 @@ int main(int argc, char* argv[], char* envp[]) {
 			//	unHooksSize += g_unHookSize * vecImports.size();
 			//}
 
+			if (!unHooksSize) {
+				PRINT_ERROR("Nothing to hook! (Do not use /hookexports)");
+				return -1;
+			}
+
 			std::tuple<LPVOID, DWORD, DWORD, DWORD, DWORD> hookssect = AppendNewSection64(pDstMap, unNewFileSize, ".rxhooks", unHooksSize, IMAGE_SCN_CNT_CODE | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_READ);
 			LPVOID hookssect_ptr = std::get<0>(hookssect);
 			DWORD hookssect_virtualaddress = std::get<1>(hookssect);
@@ -1513,7 +1523,7 @@ int main(int argc, char* argv[], char* envp[]) {
 			DWORD hookssect_rawsize = std::get<4>(hookssect);
 
 			PRINT_POSITIVE("Section `.rxhooks` has been added.");
-			PRINT_INFO("ImageAddress:   0x%08X", pDstOH->ImageBase + hookssect_virtualaddress);
+			PRINT_INFO("ImageAddress:   0x%016llX", pDstOH->ImageBase + hookssect_virtualaddress);
 			PRINT_INFO("VirtualAddress: 0x%08X", hookssect_virtualaddress);
 			PRINT_INFO("VirtualSize:    0x%08X", hookssect_virtualsize);
 			PRINT_INFO("RawAddress:     0x%08X", hookssect_rawaddress);
@@ -1522,7 +1532,7 @@ int main(int argc, char* argv[], char* envp[]) {
 			memset(hookssect_ptr, 0xC3 /* INT3s... */, hookssect_rawsize);
 
 			DWORD unHookCount = 0;
-			std::vector<std::tuple<PDWORD, PWORD, char*>> vecDstExports = GetExports32(pDstMap);
+			std::vector<std::tuple<PDWORD, PWORD, char*>> vecDstExports = GetExports64(pDstMap);
 			for (std::vector<std::tuple<PDWORD, PWORD, char*>>::iterator it = vecDstExports.begin(); it != vecDstExports.end(); ++it, ++unHookCount) {
 				PDWORD pFunctionRVA = std::get<0>(*it);
 				char* pHookBegin = reinterpret_cast<char*>(hookssect_ptr) + g_unHookSize * unHookCount + g_unHookAlignSize * unHookCount;
