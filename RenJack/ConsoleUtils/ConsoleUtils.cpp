@@ -100,10 +100,14 @@ BOOL ConsoleUtils::ClearConsole() {
 	scrollTarget.Y = -bufinf.dwSize.Y;
 
 	CHAR_INFO fill;
+#ifdef UNICODE
 	fill.Char.UnicodeChar = L' ';
+#else
+	fill.Char.AsciiChar = ' ';
+#endif
 	fill.Attributes = bufinf.wAttributes;
 
-	if (!::ScrollConsoleScreenBufferA(hConsoleOutput, &scrollRect, nullptr, scrollTarget, &fill)) {
+	if (!::ScrollConsoleScreenBuffer(hConsoleOutput, &scrollRect, nullptr, scrollTarget, &fill)) {
 		return FALSE;
 	}
 
