@@ -1,3 +1,5 @@
+# Warning: The project is still in development.
+
 # RenJack
 Renard Injector (PE section injection with hooks)
 # Principle of operation
